@@ -28,7 +28,17 @@ claude.ai — it needs its own key and is billed per use).
    depending on image size), but it is metered usage — check
    https://docs.claude.com/en/docs/about-claude/pricing for current rates.
 
-## 3. Deploy to Railway
+## 3. Set up your Discord channels
+
+Create three channels in your server (or reuse existing ones):
+
+- A **screenshot intake** channel — where people drop bet slip pictures.
+- An **output/log** channel — where the bot posts the clean parsed summary with reactions.
+- A **stats** channel — where daily/weekly/monthly recaps get posted automatically.
+
+Turn on Developer Mode in Discord (User Settings → Advanced → Developer Mode), then right-click each channel and "Copy Channel ID" to get the IDs for the next step.
+
+## 4. Deploy to Railway
 
 1. Push this folder to a GitHub repo.
 2. https://railway.app → **New Project** → **Deploy from GitHub repo** → pick the repo.
@@ -36,8 +46,9 @@ claude.ai — it needs its own key and is billed per use).
    - `DISCORD_BOT_TOKEN`
    - `ANTHROPIC_API_KEY`
    - `DB_PATH` = `/data/bets.db`
-   - `BET_CHANNEL_ID` (optional — right-click a channel in Discord with Developer
-     Mode on to copy its ID; leave unset to watch every channel the bot can see)
+   - `BET_CHANNEL_ID` — the screenshot intake channel's ID
+   - `OUTPUT_CHANNEL_ID` — the channel where formatted bets + reactions should post
+   - `STATS_CHANNEL_ID` — the channel for automatic recaps
    - `ALLOW_ANYONE_TO_SETTLE` = `true` if you want any friend to be able to settle
      any bet, not just the person who posted it (default: only the poster can settle)
 4. Add a **Volume**: service → Settings → Volumes → mount path `/data`. Without this,
@@ -49,15 +60,22 @@ claude.ai — it needs its own key and is billed per use).
 This will run continuously on Railway's Hobby plan (~$5/month, which is also the
 plan's included usage credit, so a small bot like this should normally stay within it).
 
-## 4. Using it
+## 5. Using it
 
-- Drop a screenshot of a bet slip into the channel. The bot replies with a parsed
-  summary and three reactions: ✅ won, ❌ lost, ↩️ push/void.
-- React to settle it. The embed updates with the result and profit/loss.
-- If the parse comes out wrong or blank, use `/logbet` to enter it manually.
+- Drop a screenshot of a bet slip into the intake channel. The bot reacts with ⏳ while it
+  reads it, then ✅ once done — and posts the parsed summary with three reactions
+  (✅ won, ❌ lost, ↩️ push) into your output channel.
+- React on that output-channel message to settle it. The embed updates with the result
+  and profit/loss.
+- If the parse comes out wrong, use `/logbet` to enter it manually — it'll post to the
+  output channel the same way.
 - `/stats [user]` — record, win %, net profit for you or someone else.
 - `/leaderboard` — net profit ranking across everyone who's logged a bet.
 - `/pending` — your bets still waiting to be settled.
+- `/recap [day/week/month]` — post a stats recap right now, instead of waiting for the
+  automatic schedule.
+- Automatic recaps post to your stats channel: daily at midnight UTC, weekly on Monday
+  midnight UTC, monthly on the 1st at midnight UTC.
 
 ## Notes / things worth knowing
 

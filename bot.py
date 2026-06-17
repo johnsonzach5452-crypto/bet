@@ -2,11 +2,11 @@ import os
 import json
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import aiosqlite
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -15,7 +15,9 @@ load_dotenv()
 
 DISCORD_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-BET_CHANNEL_ID = os.environ.get("BET_CHANNEL_ID")  # optional: restrict to one channel
+BET_CHANNEL_ID = os.environ.get("BET_CHANNEL_ID")  # optional: restrict screenshot intake to one channel
+OUTPUT_CHANNEL_ID = os.environ.get("OUTPUT_CHANNEL_ID")  # where formatted bets get posted (blank = reply inline)
+STATS_CHANNEL_ID = os.environ.get("STATS_CHANNEL_ID")  # where daily/weekly/monthly recaps get posted (blank = off)
 DB_PATH = os.environ.get("DB_PATH", "bets.db")
 # If True, anyone can settle a bet by reacting, not just the original poster
 ALLOW_ANYONE_TO_SETTLE = os.environ.get("ALLOW_ANYONE_TO_SETTLE", "false").lower() == "true"
@@ -91,6 +93,20 @@ def calc_profit(odds, stake, status):
         return 0.0
 
 
+def detect_media_type(data: bytes, fallback: str) -> str:
+    """Sniff the real image type from file bytes. Discord's reported content_type
+    can be wrong/mismatched, and the Anthropic API rejects that mismatch outright."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return fallback
+
+
 def fmt_odds(odds):
     if odds is None:
         return None
@@ -137,6 +153,70 @@ def build_embed(data, author_name, status="pending", profit=None):
     return embed
 
 
+async def post_period_stats(channel, days, label):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT username, COALESCE(SUM(profit),0) as total,
+                   SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN status='lost' THEN 1 ELSE 0 END) as losses,
+                   SUM(CASE WHEN status='push' THEN 1 ELSE 0 END) as pushes
+            FROM bets WHERE status != 'pending' AND settled_at >= ?
+            GROUP BY user_id ORDER BY total DESC
+            """,
+            (cutoff,),
+        )
+        rows = await cur.fetchall()
+
+    if not rows:
+        embed = discord.Embed(
+            title=f"{label} Recap", description="No settled bets in this period.", color=discord.Color.dark_grey()
+        )
+        await channel.send(embed=embed)
+        return
+
+    total_count = sum(w + l + p for _, _, w, l, p in rows)
+    total_profit = sum(t for _, t, _, _, _ in rows)
+    lines = [
+        f"{i}. **{username}** — {wins}-{losses}-{pushes} — {'+' if total >= 0 else ''}{total:.2f}"
+        for i, (username, total, wins, losses, pushes) in enumerate(rows, start=1)
+    ]
+    embed = discord.Embed(title=f"{label} Recap", description="\n".join(lines), color=discord.Color.teal())
+    embed.set_footer(text=f"{total_count} bets settled — group net: {'+' if total_profit >= 0 else ''}{total_profit:.2f}")
+    await channel.send(embed=embed)
+
+
+_last_daily = None
+_last_weekly = None
+_last_monthly = None
+
+
+@tasks.loop(minutes=15)
+async def periodic_stats():
+    global _last_daily, _last_weekly, _last_monthly
+    if not STATS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(STATS_CHANNEL_ID))
+    if channel is None:
+        return
+
+    now = datetime.now(timezone.utc)  # Railway runs in UTC by default
+    today = now.date()
+
+    if now.hour == 0 and _last_daily != today:
+        await post_period_stats(channel, days=1, label="Daily")
+        _last_daily = today
+
+    if now.weekday() == 0 and now.hour == 0 and _last_weekly != today:
+        await post_period_stats(channel, days=7, label="Weekly")
+        _last_weekly = today
+
+    if now.day == 1 and now.hour == 0 and _last_monthly != today:
+        await post_period_stats(channel, days=30, label="Monthly")
+        _last_monthly = today
+
+
 @bot.event
 async def on_ready():
     await init_db()
@@ -144,12 +224,18 @@ async def on_ready():
         await bot.tree.sync()
     except Exception:
         log.exception("slash command sync failed")
+    if STATS_CHANNEL_ID and not periodic_stats.is_running():
+        periodic_stats.start()
     log.info(f"Logged in as {bot.user} (id={bot.user.id})")
 
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        return
+    if OUTPUT_CHANNEL_ID and str(message.channel.id) == str(OUTPUT_CHANNEL_ID):
+        return
+    if STATS_CHANNEL_ID and str(message.channel.id) == str(STATS_CHANNEL_ID):
         return
     if BET_CHANNEL_ID and str(message.channel.id) != str(BET_CHANNEL_ID):
         await bot.process_commands(message)
@@ -165,9 +251,16 @@ async def on_message(message):
     attachment = image_attachments[0]
     img_bytes = await attachment.read()
     b64 = base64.b64encode(img_bytes).decode("utf-8")
-    media_type = attachment.content_type
+    media_type = detect_media_type(img_bytes, attachment.content_type)
 
-    thinking = await message.reply("Reading bet slip...")
+    processing_msg = None
+    if OUTPUT_CHANNEL_ID:
+        try:
+            await message.add_reaction("⏳")
+        except discord.HTTPException:
+            pass
+    else:
+        processing_msg = await message.reply("Reading bet slip...")
 
     try:
         response = anthropic_client.messages.create(
@@ -194,14 +287,33 @@ async def on_message(message):
         data = json.loads(text.strip())
     except Exception as e:
         log.exception("parse failed")
-        await thinking.edit(
-            content=f"Couldn't read that slip clearly. Try a clearer screenshot, or log it manually with `/logbet`."
-        )
+        if OUTPUT_CHANNEL_ID:
+            try:
+                await message.remove_reaction("⏳", bot.user)
+            except discord.HTTPException:
+                pass
+            await message.add_reaction("⚠️")
+        else:
+            await processing_msg.edit(
+                content="Couldn't read that slip clearly. Try a clearer screenshot, or log it manually with `/logbet`."
+            )
         return
 
     embed = build_embed(data, message.author.display_name, status="pending")
-    await thinking.delete()
-    bet_msg = await message.reply(embed=embed)
+
+    if OUTPUT_CHANNEL_ID:
+        target_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+        embed.add_field(name="Source", value=f"[jump to screenshot]({message.jump_url})", inline=False)
+        try:
+            await message.remove_reaction("⏳", bot.user)
+        except discord.HTTPException:
+            pass
+        await message.add_reaction("✅")
+        bet_msg = await target_channel.send(embed=embed)
+    else:
+        await processing_msg.delete()
+        bet_msg = await message.reply(embed=embed)
+
     for emoji in REACTIONS:
         await bet_msg.add_reaction(emoji)
 
@@ -302,8 +414,15 @@ async def logbet(
         "potential_payout": potential_payout,
     }
     embed = build_embed(data, interaction.user.display_name, status="pending")
-    await interaction.response.send_message(embed=embed)
-    msg = await interaction.original_response()
+
+    if OUTPUT_CHANNEL_ID:
+        target_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+        msg = await target_channel.send(embed=embed)
+        await interaction.response.send_message(f"Logged — see {target_channel.mention}", ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+
     for emoji in REACTIONS:
         await msg.add_reaction(emoji)
 
@@ -316,7 +435,7 @@ async def logbet(
             """,
             (
                 str(msg.id),
-                str(interaction.channel.id),
+                str(msg.channel.id),
                 str(interaction.guild.id) if interaction.guild else None,
                 str(interaction.user.id),
                 interaction.user.display_name,
@@ -385,6 +504,28 @@ async def leaderboard(interaction: discord.Interaction):
     ]
     embed = discord.Embed(title="Leaderboard", description="\n".join(lines), color=discord.Color.purple())
     await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="recap", description="Post a day/week/month stats recap right now")
+@app_commands.choices(
+    period=[
+        app_commands.Choice(name="day", value="day"),
+        app_commands.Choice(name="week", value="week"),
+        app_commands.Choice(name="month", value="month"),
+    ]
+)
+async def recap(interaction: discord.Interaction, period: app_commands.Choice[str]):
+    days_map = {"day": 1, "week": 7, "month": 30}
+    label_map = {"day": "Daily", "week": "Weekly", "month": "Monthly"}
+    days = days_map[period.value]
+    label = label_map[period.value]
+
+    target_channel = bot.get_channel(int(STATS_CHANNEL_ID)) if STATS_CHANNEL_ID else interaction.channel
+    await post_period_stats(target_channel, days=days, label=label)
+    if STATS_CHANNEL_ID and target_channel.id != interaction.channel.id:
+        await interaction.response.send_message(f"Posted in {target_channel.mention}", ephemeral=True)
+    else:
+        await interaction.response.send_message("Posted above ⬆️", ephemeral=True)
 
 
 @bot.tree.command(name="pending", description="List your pending (unsettled) bets")
