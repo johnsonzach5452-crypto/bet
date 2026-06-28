@@ -1,0 +1,475 @@
+"""
+backfill.py — run this ONCE to populate your Google Sheet with all existing bets from the database.
+
+Usage (in Railway console):
+    python3 backfill.py
+
+Requires GOOGLE_CREDENTIALS_JSON, SPREADSHEET_ID, and DB_PATH to be set as environment variables
+(they're already set in Railway since the bot uses them).
+"""
+
+import os
+import json
+import sqlite3
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from itertools import takewhile
+
+CENTRAL = ZoneInfo("America/Chicago")
+
+DB_PATH           = os.environ.get("DB_PATH", "bets.db")
+SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+
+if not SPREADSHEET_ID or not GOOGLE_CREDS_JSON:
+    print("ERROR: SPREADSHEET_ID and GOOGLE_CREDENTIALS_JSON must be set as environment variables.")
+    exit(1)
+
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+except ImportError:
+    print("ERROR: gspread not installed. Run: pip install gspread google-auth")
+    exit(1)
+
+SHEET_HEADERS = [
+    "Date Posted (CT)",    # A
+    "Date Settled (CT)",   # B
+    "Username",            # C
+    "Group",               # D
+    "Description",         # E
+    "Sport",               # F
+    "League",              # G
+    "Sportsbook",          # H
+    "Bet Type",            # I
+    "Prop Category",       # J
+    "Legs (#)",            # K
+    "Odds",                # L
+    "Stake ($)",           # M
+    "To Win ($)",          # N
+    "Status",              # O
+    "Profit ($)",          # P
+    "ROI %",               # Q
+    "Cumulative P&L ($)",  # R
+    "Streak",              # S
+    "Message ID",          # T
+]
+
+
+def _c(r, g, b):
+    return {"red": r/255, "green": g/255, "blue": b/255}
+
+
+def fmt_dt(iso_str, tz=CENTRAL):
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz).strftime("%Y-%m-%d %I:%M %p")
+    except Exception:
+        return iso_str or ""
+
+
+def calc_profit(odds, stake, status, potential_payout=None):
+    if stake is None:
+        return None
+    if status == "lost":
+        return round(-stake, 2)
+    if status == "push":
+        return 0.0
+    if status == "won":
+        if odds is not None:
+            if odds > 0:
+                return round(stake * (odds / 100), 2)
+            else:
+                return round(stake * (100 / abs(odds)), 2)
+        if potential_payout is not None:
+            return round(potential_payout - stake, 2)
+    return None
+
+
+import time
+
+CHECKPOINT_FILE = "backfill_checkpoint.json"
+
+
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE) as f:
+            return set(json.load(f).get("completed", []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+
+def save_checkpoint(completed_users):
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump({"completed": list(completed_users)}, f)
+
+
+def sheets_retry(fn, retries=3, delay=5):
+    """Call fn(), retrying up to `retries` times on failure with exponential backoff."""
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            wait = delay * (2 ** attempt)
+            print(f"  ⚠️  Attempt {attempt + 1} failed: {e}. Retrying in {wait}s...")
+            time.sleep(wait)
+    import calendar as cal_lib
+    from zoneinfo import ZoneInfo
+    CENTRAL = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL)
+    year, month = now.year, now.month
+    month_name = now.strftime("%B %Y")
+    tab_title = f"{username} Calendar"
+
+    def _c(r, g, b):
+        return {"red": r/255, "green": g/255, "blue": b/255}
+
+    try:
+        cal_ws = ss.worksheet(tab_title)
+        cal_ws.clear()
+    except gspread.WorksheetNotFound:
+        cal_ws = ss.add_worksheet(title=tab_title, rows=12, cols=7)
+
+    q = f"'{data_sheet_title}'"
+    p_col = f"{q}!P:P"
+    a_col = f"{q}!A:A"   # Date Posted (CT) — group by placement date
+    o_col = f"{q}!O:O"
+
+    rows = [[f"📅  {username.upper()} — {month_name}", "", "", "", "", "", ""]]
+    rows.append(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+
+    first_weekday, num_days = cal_lib.monthrange(year, month)
+    start_offset = (first_weekday + 1) % 7
+    week = [""] * 7
+    day = 1
+    calendar_rows = []
+    col = start_offset
+    while day <= num_days:
+        formula = (
+            f'=IFERROR(SUMIFS({p_col},{a_col},">="&DATE({year},{month},{day}),'
+            f'{a_col},"<"&DATE({year},{month},{day})+1,{o_col},"<>pending"),"")'
+        )
+        week[col] = formula
+        col += 1
+        if col == 7:
+            calendar_rows.append(week)
+            week = [""] * 7
+            col = 0
+        day += 1
+    if any(c != "" for c in week):
+        calendar_rows.append(week)
+    rows.extend(calendar_rows)
+    cal_ws.update("A1", rows, value_input_option="USER_ENTERED")
+
+    sid = cal_ws.id
+    reqs = []
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                  "startColumnIndex": 0, "endColumnIndex": 7},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": _c(26, 26, 46),
+            "textFormat": {"foregroundColor": _c(255,255,255), "bold": True, "fontSize": 13},
+            "horizontalAlignment": "CENTER",
+        }},
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+    }})
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2,
+                  "startColumnIndex": 0, "endColumnIndex": 7},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": _c(52, 73, 94),
+            "textFormat": {"foregroundColor": _c(255,255,255), "bold": True},
+            "horizontalAlignment": "CENTER",
+        }},
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+    }})
+    cal_range = {"sheetId": sid, "startRowIndex": 2,
+                 "endRowIndex": 2 + len(calendar_rows), "startColumnIndex": 0, "endColumnIndex": 7}
+    reqs.append({"repeatCell": {
+        "range": cal_range,
+        "cell": {"userEnteredFormat": {
+            "numberFormat": {"type": "CURRENCY", "pattern": '"$"#,##0.00;"-$"#,##0.00'},
+            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+            "textFormat": {"fontSize": 11, "bold": True},
+        }},
+        "fields": "userEnteredFormat(numberFormat,horizontalAlignment,verticalAlignment,textFormat)"
+    }})
+    for op, bg, fg in [("NUMBER_GREATER", _c(198,239,206), _c(0,97,0)),
+                        ("NUMBER_LESS",    _c(255,199,206), _c(156,0,6))]:
+        reqs.append({"addConditionalFormatRule": {"rule": {
+            "ranges": [cal_range],
+            "booleanRule": {
+                "condition": {"type": op, "values": [{"userEnteredValue": "0"}]},
+                "format": {"backgroundColor": bg, "textFormat": {"foregroundColor": fg, "bold": True}}
+            }
+        }, "index": 0}})
+    for i in range(7):
+        reqs.append({"updateDimensionProperties": {
+            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
+            "properties": {"pixelSize": 130}, "fields": "pixelSize"
+        }})
+    for i in range(2, 2 + len(calendar_rows)):
+        reqs.append({"updateDimensionProperties": {
+            "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": i, "endIndex": i+1},
+            "properties": {"pixelSize": 60}, "fields": "pixelSize"
+        }})
+    ss.batch_update({"requests": reqs})
+
+
+def apply_formatting(ss, ws):
+    sid = ws.id
+    reqs = []
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                  "startColumnIndex": 0, "endColumnIndex": 20},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": _c(26, 26, 46),
+            "textFormat": {"foregroundColor": _c(255, 255, 255), "bold": True, "fontSize": 10},
+            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+        }},
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+    }})
+    reqs.append({"updateSheetProperties": {
+        "properties": {"sheetId": sid, "gridProperties": {"frozenRowCount": 1}},
+        "fields": "gridProperties.frozenRowCount"
+    }})
+    widths = [140,140,100,80,300,100,70,110,90,130,55,70,80,80,75,85,70,120,70,160]
+    for i, w in enumerate(widths):
+        reqs.append({"updateDimensionProperties": {
+            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
+            "properties": {"pixelSize": w}, "fields": "pixelSize"
+        }})
+    for start, end in [(12,14),(15,16),(17,18)]:
+        reqs.append({"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2000,
+                      "startColumnIndex": start, "endColumnIndex": end},
+            "cell": {"userEnteredFormat": {"numberFormat": {"type": "CURRENCY", "pattern": '"$"#,##0.00'}}},
+            "fields": "userEnteredFormat.numberFormat"
+        }})
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2000,
+                  "startColumnIndex": 16, "endColumnIndex": 17},
+        "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": '#,##0.0"%"'}}},
+        "fields": "userEnteredFormat.numberFormat"
+    }})
+    row_range = {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2000,
+                 "startColumnIndex": 0, "endColumnIndex": 20}
+    for status, bg, fg in [
+        ("won",     _c(198,239,206), _c(0,97,0)),
+        ("lost",    _c(255,199,206), _c(156,0,6)),
+        ("push",    _c(220,220,220), _c(80,80,80)),
+        ("pending", _c(255,242,204), _c(100,80,0)),
+    ]:
+        reqs.append({"addConditionalFormatRule": {"rule": {
+            "ranges": [row_range],
+            "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA",
+                              "values": [{"userEnteredValue": f'=$O2="{status}"'}]},
+                "format": {"backgroundColor": bg, "textFormat": {"foregroundColor": fg}}
+            }
+        }, "index": 0}})
+    for col_start, col_end in [(15,16),(17,18)]:
+        pr = {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2000,
+              "startColumnIndex": col_start, "endColumnIndex": col_end}
+        for op, color in [("NUMBER_GREATER", _c(0,97,0)), ("NUMBER_LESS", _c(156,0,6))]:
+            reqs.append({"addConditionalFormatRule": {"rule": {
+                "ranges": [pr],
+                "booleanRule": {
+                    "condition": {"type": op, "values": [{"userEnteredValue": "0"}]},
+                    "format": {"textFormat": {"foregroundColor": color, "bold": True}}
+                }
+            }, "index": 0}})
+    ss.batch_update({"requests": reqs})
+
+
+import time
+
+CHECKPOINT_FILE = "backfill_checkpoint.json"
+
+
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE) as f:
+            return set(json.load(f).get("completed", []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+
+def save_checkpoint(completed_users):
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump({"completed": list(completed_users)}, f)
+
+
+def sheets_retry(fn, retries=3, delay=5):
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            wait = delay * (2 ** attempt)
+            print(f"  ⚠️  Attempt {attempt + 1} failed: {e}. Retrying in {wait}s...")
+            time.sleep(wait)
+
+
+def main():
+    completed = load_checkpoint()
+    if completed:
+        print(f"Resuming — skipping already-completed: {', '.join(completed)}")
+
+    print("Connecting to Google Sheets...")
+    raw = GOOGLE_CREDS_JSON.strip().replace("\n", "").replace("\r", "")
+    if raw.startswith("\ufeff"):
+        raw = raw[1:]
+    try:
+        creds_dict = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: GOOGLE_CREDENTIALS_JSON is not valid JSON: {e}")
+        print("Make sure you copied the entire .json file as one block — no line breaks.")
+        exit(1)
+
+    required = {"type", "project_id", "private_key", "client_email"}
+    missing = required - set(creds_dict.keys())
+    if missing:
+        print(f"ERROR: credentials JSON is missing fields: {missing}")
+        exit(1)
+
+    creds = Credentials.from_service_account_info(
+        creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    gc = gspread.authorize(creds)
+    try:
+        ss = gc.open_by_key(SPREADSHEET_ID)
+        print(f"✅ Connected to: '{ss.title}'")
+    except Exception as e:
+        print(f"ERROR: Could not open spreadsheet {SPREADSHEET_ID}: {e}")
+        print("Make sure the sheet is shared with the service account email.")
+        exit(1)
+
+    print(f"Reading bets from {DB_PATH}...")
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM bets ORDER BY username, COALESCE(settled_at, created_at) ASC")
+    all_bets = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    print(f"Found {len(all_bets)} bets total.")
+
+    by_user = {}
+    for bet in all_bets:
+        by_user.setdefault(bet["username"] or "Unknown", []).append(bet)
+
+    for username, bets in by_user.items():
+        if username in completed:
+            print(f"Skipping {username} (checkpoint)")
+            continue
+
+        print(f"\nWriting {len(bets)} bets for {username}...")
+        try:
+            ws = sheets_retry(lambda u=username: ss.worksheet(u))
+            sheets_retry(ws.clear)
+            print(f"  Cleared existing sheet")
+        except gspread.WorksheetNotFound:
+            ws = sheets_retry(lambda: ss.add_worksheet(title=username, rows=2000, cols=len(SHEET_HEADERS)))
+            print(f"  Created new sheet")
+
+        sheets_retry(lambda: ws.append_row(SHEET_HEADERS, value_input_option="RAW"))
+
+        rows = []
+        cumulative = 0.0
+        settled_statuses = []
+
+        for bet in bets:
+            status = bet.get("status") or "pending"
+            odds   = bet.get("odds")
+            stake  = bet.get("stake")
+            payout = bet.get("potential_payout")
+            profit = bet.get("profit")
+            if profit is None:
+                profit = calc_profit(odds, stake, status, payout)
+            roi = ""
+            if profit is not None and stake:
+                try:
+                    roi = round(float(profit) / float(stake) * 100, 1)
+                except (ValueError, TypeError):
+                    pass
+            cumulative_val = ""
+            if status in ("won", "lost", "push") and profit is not None:
+                cumulative += profit
+                cumulative_val = round(cumulative, 2)
+            streak_str = ""
+            if status in ("won", "lost"):
+                settled_statuses.append(status)
+                last = settled_statuses[-1]
+                count = sum(1 for _ in takewhile(lambda s: s == last, reversed(settled_statuses)))
+                streak_str = f"{'W' if last == 'won' else 'L'}{count}"
+            legs_raw = bet.get("legs") or "[]"
+            try:
+                legs_count = len(json.loads(legs_raw))
+            except Exception:
+                legs_count = 0
+            rows.append([
+                fmt_dt(bet.get("created_at")),
+                fmt_dt(bet.get("settled_at")) if status != "pending" else "",
+                username,
+                bet.get("group_name") or "",
+                bet.get("description") or "",
+                (bet.get("sport") or "").title(),
+                (bet.get("league") or "").upper(),
+                bet.get("sportsbook") or "",
+                (bet.get("bet_type") or "").title(),
+                "",
+                legs_count if legs_count > 1 else "",
+                odds or "",
+                stake or "",
+                payout or "",
+                status,
+                round(profit, 2) if profit is not None else "",
+                roi,
+                cumulative_val,
+                streak_str,
+                str(bet.get("message_id") or ""),
+            ])
+
+        if rows:
+            for i in range(0, len(rows), 100):
+                chunk = rows[i:i+100]
+                sheets_retry(lambda c=chunk: ws.append_rows(c, value_input_option="USER_ENTERED"))
+                print(f"  Rows {i+1}–{min(i+100,len(rows))}/{len(rows)}")
+                time.sleep(1)
+
+        print(f"  Applying formatting...")
+        try:
+            sheets_retry(lambda: apply_formatting(ss, ws))
+        except Exception as e:
+            print(f"  Formatting warning (non-fatal): {e}")
+
+        print(f"  Creating calendar tab...")
+        try:
+            sheets_retry(lambda u=username, t=ws.title: _create_calendar_tab(ss, u, t))
+        except Exception as e:
+            print(f"  Calendar warning (non-fatal): {e}")
+
+        completed.add(username)
+        save_checkpoint(completed)
+        print(f"  ✅ {username} done — checkpoint saved")
+
+    # Clean up checkpoint on full success
+    try:
+        import os
+        os.remove(CHECKPOINT_FILE)
+    except FileNotFoundError:
+        pass
+
+    print(f"\n✅ Backfill complete — {len(by_user)} user sheet(s) written.")
+    print("Open your Google Sheet to verify, then delete backfill.py from Railway.")
+
+
+if __name__ == "__main__":
+    main()
