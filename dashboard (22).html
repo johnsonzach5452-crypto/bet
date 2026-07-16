@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>BetTracker</title>
+<meta name="theme-color" content="#07090F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BetTracker">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#07090F;--s1:#0D1117;--s2:#131923;--border:#1C2535;
+  --green:#00D68F;--green2:#003D24;--red:#FF4D4D;--red2:#3D0000;
+  --blue:#4D9FFF;--amber:#FFB84D;--text:#E8EDF5;--muted:#4A5568;--label:#8892A4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:13px}
+/* ambient glow — the room the numbers live in */
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(600px 300px at 50% -80px, rgba(0,214,143,.07), transparent 70%)}
+main{position:relative;z-index:1;padding-bottom:env(safe-area-inset-bottom)}
+/* one orchestrated entrance, then stillness */
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#dash{animation:rise .45s cubic-bezier(.2,.7,.3,1)}
+@media (prefers-reduced-motion: reduce){#dash{animation:none}*{transition:none!important}}
+
+/* Header */
+header{background:rgba(13,17,23,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  padding:env(safe-area-inset-top) 20px 0;height:calc(56px + env(safe-area-inset-top));
+  display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.logo{font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px}
+.logo span{color:var(--green)}
+.tabs{display:flex;gap:6px}
+.tab{background:var(--s2);border:1px solid var(--border);color:var(--muted);
+  padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;
+  transition:all .15s;font-family:'Inter',sans-serif}
+.tab.on{background:var(--green);border-color:var(--green);color:#000}
+.ref{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 10px;
+  border-radius:8px;cursor:pointer;font-size:12px;font-family:'Inter',sans-serif;transition:all .15s}
+.ref:hover{color:var(--blue);border-color:var(--blue)}
+.tab:focus-visible,.ref:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+main{padding:14px 16px;max-width:1400px;margin:0 auto}
+
+/* Loading */
+#loading{text-align:center;padding:80px 0;color:var(--muted)}
+@keyframes shimmer{0%{opacity:.45}50%{opacity:.75}100%{opacity:.45}}
+.skel{background:var(--s1);border:1px solid var(--border);border-radius:12px;
+  animation:shimmer 1.4s ease-in-out infinite}
+.skel-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:12px}
+@media(max-width:1000px){.skel-grid{grid-template-columns:1fr 1fr}}
+.sk-card{height:96px}
+.sk-wide{height:220px;margin-bottom:12px}
+.spin{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--green);
+  border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Scorecard grid: 4 cols desktop, 2 cols mobile ── */
+.ctrlbar{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  margin-bottom:12px;flex-wrap:wrap}
+.today-strip{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--label);
+  align-items:center;min-height:32px}
+.today-strip b{font-weight:700}
+.ts-sep{color:var(--border)}
+.rng-group{display:flex;gap:4px;background:var(--s1);border:1px solid var(--border);
+  border-radius:8px;padding:3px}
+.rng{background:none;border:none;color:var(--muted);font-family:'Inter',sans-serif;
+  font-size:11px;font-weight:700;padding:6px 12px;border-radius:6px;cursor:pointer;
+  min-height:28px;transition:all .15s}
+.rng.on{background:var(--s2);color:var(--text)}
+.rng:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.sc.filter-on{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+.sc.tappable{cursor:pointer}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);
+  margin-right:8px;animation:livepulse 1.6s ease-in-out infinite;vertical-align:1px}
+@keyframes livepulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(255,77,77,.5)}
+  50%{opacity:.7;box-shadow:0 0 0 5px rgba(255,77,77,0)}}
+@media (prefers-reduced-motion: reduce){.live-dot{animation:none}}
+.filter-pill{display:inline-flex;align-items:center;gap:6px;background:#0A2540;
+  color:var(--blue);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;
+  cursor:pointer;margin-left:8px}
+.sc-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:12px}
+@media(max-width:1000px){.sc-grid{grid-template-columns:repeat(2,1fr)}}
+.sc{background:var(--s1);border:1px solid var(--border);border-radius:12px;
+  padding:18px 20px;position:relative;overflow:hidden;
+  transition:border-color .2s,transform .2s}
+.sc:hover{border-color:#2A3850;transform:translateY(-1px)}
+.sc-val,.clv-num,.cal-amt{font-variant-numeric:tabular-nums}
+.sc::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--a,var(--blue))}
+.sc-lbl{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:8px}
+.sc-val{font-family:'Barlow Condensed',sans-serif;font-size:36px;font-weight:700;line-height:1}
+.sc-hero .sc-val{font-size:44px}
+.sc-hero{box-shadow:inset 0 0 40px -24px var(--green)}
+.sc-hero{padding-bottom:36px}
+.sc-hero>*{position:relative;z-index:1}
+#spark{position:absolute;left:0;right:0;bottom:0;width:100%;height:56px;
+  z-index:0;pointer-events:none;opacity:.5}
+.sc-sub{font-size:12px;color:var(--label);margin-top:6px}
+.pos{color:var(--green)!important}
+.neg{color:var(--red)!important}
+.neu{color:var(--label)!important}
+
+/* ── Section cards ── */
+.cc{background:var(--s1);border:1px solid var(--border);border-radius:12px;
+  padding:18px;margin-bottom:12px}
+.ct{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:14px}
+.cw{position:relative}
+
+/* ── Two chart columns ── */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.three-col{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+@media(max-width:700px){.two-col,.three-col{grid-template-columns:1fr}}
+
+/* ── Pending card list ── */
+.tcard{background:var(--s1);border:1px solid var(--border);border-radius:12px;
+  overflow:hidden;margin-bottom:12px}
+.thead{padding:14px 18px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+@media(max-width:700px){.ref{padding:4px 8px;font-size:11px}}
+@media(max-width:460px){#hdr-today{display:none}}
+.pend-row{padding:12px 16px;border-bottom:1px solid var(--border);
+  display:grid;grid-template-columns:1fr auto auto auto;gap:3px 14px;align-items:center}
+@media(max-width:700px){.pend-row{grid-template-columns:1fr auto auto}.pend-odds{grid-column:1;text-align:left}}
+.pend-row:last-child{border-bottom:none}
+.pend-row:hover{background:var(--s2)}
+.pend-desc{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;grid-column:1/-1}
+.pend-meta{font-size:11px;color:var(--muted);grid-column:1}
+.pend-stake{font-size:13px;font-weight:600;color:var(--amber);white-space:nowrap}
+.pend-win{font-size:13px;font-weight:600;color:var(--green);white-space:nowrap}
+.pend-odds{text-align:right;white-space:nowrap;line-height:1.5}
+.po-entry{font-size:12px;color:var(--label);font-weight:600}
+.po-live{font-size:11px;font-weight:700}
+.po-up{color:var(--green)}
+.po-down{color:var(--red)}
+.po-flat{color:var(--muted);font-weight:500}
+
+/* CLV section */
+.clv-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 16px;
+  border-bottom:1px solid var(--border)}
+@media(max-width:700px){.clv-strip{grid-template-columns:repeat(2,1fr)}}
+.clv-stat{text-align:center}
+.clv-num{font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:700;line-height:1.1}
+.clv-lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin-top:3px}
+.clv-body{display:grid;grid-template-columns:1.6fr 1fr}
+@media(max-width:700px){.clv-body{grid-template-columns:1fr}
+  .clv-body>div:last-child{border-left:none!important;border-top:1px solid var(--border)}}
+.clv-sport{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 2px;border-bottom:1px solid var(--border)}
+.clv-sport:last-child{border-bottom:none}
+.clv-sport-name{font-size:12px;color:var(--label)}
+.clv-sport-n{font-size:10px;color:var(--muted);margin-left:6px}
+.clv-sport-val{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700}
+
+/* ── Recent bets table ── */
+.tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse}
+th{padding:9px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);background:var(--s2);
+  border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--s2)}
+.badge{display:inline-block;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase}
+.bw{background:var(--green2);color:var(--green)}
+.bl{background:var(--red2);color:var(--red)}
+.bp{background:#1C2535;color:#6B7A90}
+.bpend{background:#2A1F00;color:var(--amber)}
+
+/* ── 30-day calendar ── */
+.cal-wrap{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-hdr{text-align:center;font-size:10px;font-weight:700;color:var(--muted);
+  letter-spacing:.06em;padding:4px 0;text-transform:uppercase}
+.cal-day{border-radius:8px;padding:8px 4px;min-height:58px;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;
+  border:1px solid var(--border);background:var(--s2)}
+.cal-day.pos{background:var(--green2);border-color:#00D68F22}
+.cal-day.neg{background:var(--red2);border-color:#FF4D4D22}
+.cal-day.empty{opacity:.25}
+.cal-num{font-size:11px;color:var(--muted);margin-bottom:3px;font-weight:500}
+.cal-amt{font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700}
+.cal-day.pos .cal-num{color:#00D68F88}
+.cal-day.pos .cal-amt{color:var(--green)}
+.cal-day.neg .cal-num{color:#FF4D4D88}
+.cal-day.neg .cal-amt{color:var(--red)}
+
+/* ── Matrix ── */
+.matrix-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.matrix{width:100%;border-collapse:collapse;font-size:12px}
+.matrix th{padding:8px 12px;text-align:center;font-size:10px;font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  background:var(--s2);border:1px solid var(--border);white-space:nowrap}
+.matrix th.lh{text-align:left;min-width:90px}
+.matrix td{padding:9px 12px;text-align:center;border:1px solid var(--border);font-weight:600;white-space:nowrap}
+.matrix td.rl{text-align:left;color:var(--label);font-weight:500;background:var(--s2)}
+.mc-pos{background:var(--green2);color:var(--green)}
+.mc-neg{background:var(--red2);color:var(--red)}
+.mc-zero{color:var(--muted);font-weight:400}
+
+/* Footer */
+.foot{text-align:center;color:var(--muted);font-size:11px;padding:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">BET<span>TRACKER</span></div>
+  <div class="tabs">
+    <button class="tab on" onclick="switchUser('Zach',this)">Zach</button>
+    <button class="tab" onclick="switchUser('TheBlackWhale',this)">TheBlackWhale</button>
+  </div>
+  <button class="ref" onclick="loadData()">↻ Refresh</button>
+</header>
+
+<main>
+<div id="loading">
+  <div class="skel-grid">
+    <div class="skel sk-card"></div><div class="skel sk-card"></div>
+    <div class="skel sk-card"></div><div class="skel sk-card"></div>
+    <div class="skel sk-card"></div>
+  </div>
+  <div class="skel sk-wide"></div>
+  <div class="skel sk-wide" style="height:120px"></div>
+</div>
+<div id="dash" style="display:none">
+
+  <!-- ── Today strip + range control ── -->
+  <div class="ctrlbar">
+    <div class="today-strip" id="today-strip"></div>
+    <div class="rng-group">
+      <button class="rng" data-r="7" onclick="setRange('7')">7D</button>
+      <button class="rng" data-r="30" onclick="setRange('30')">30D</button>
+      <button class="rng" data-r="90" onclick="setRange('90')">90D</button>
+      <button class="rng on" data-r="all" onclick="setRange('all')">ALL</button>
+    </div>
+  </div>
+
+  <!-- ── 2×4 Scorecard grid ── -->
+  <div class="sc-grid">
+    <div class="sc sc-hero" style="--a:var(--green)">
+      <canvas id="spark"></canvas>
+      <div class="sc-lbl">Net Return</div>
+      <div class="sc-val" id="s-pnl">—</div>
+      <div class="sc-sub" id="s-pnl-sub">—</div>
+    </div>
+    <div class="sc" style="--a:var(--amber)">
+      <div class="sc-lbl">Pending</div>
+      <div class="sc-val" id="s-pend">—</div>
+      <div class="sc-sub" id="s-pend-sub">—</div>
+    </div>
+    <div class="sc" style="--a:var(--blue)">
+      <div class="sc-lbl">ROI %</div>
+      <div class="sc-val" id="s-roi">—</div>
+      <div class="sc-sub" id="s-roi-sub">—</div>
+    </div>
+    <div class="sc" style="--a:var(--blue)">
+      <div class="sc-lbl">Record</div>
+      <div class="sc-val" id="s-rec">—</div>
+      <div class="sc-sub" id="s-rec-sub">—</div>
+    </div>
+    <div class="sc" style="--a:var(--green)">
+      <div class="sc-lbl">Avg CLV</div>
+      <div class="sc-val" id="s-clv">—</div>
+      <div class="sc-sub" id="s-clv-sub">—</div>
+    </div>
+    <div class="sc tappable" onclick="toggleType('moneyline')" role="button" tabindex="0">
+      <div class="sc-lbl">Moneyline</div>
+      <div class="sc-val" id="s-ml">—</div>
+      <div class="sc-sub" id="s-ml-sub">—</div>
+    </div>
+    <div class="sc tappable" onclick="toggleType('prop')" role="button" tabindex="0">
+      <div class="sc-lbl">Props</div>
+      <div class="sc-val" id="s-prop">—</div>
+      <div class="sc-sub" id="s-prop-sub">—</div>
+    </div>
+    <div class="sc tappable" onclick="toggleType('total')" role="button" tabindex="0">
+      <div class="sc-lbl">Totals</div>
+      <div class="sc-val" id="s-tot">—</div>
+      <div class="sc-sub" id="s-tot-sub">—</div>
+    </div>
+    <div class="sc tappable" onclick="toggleType('parlay')" role="button" tabindex="0">
+      <div class="sc-lbl">Parlays</div>
+      <div class="sc-val" id="s-par">—</div>
+      <div class="sc-sub" id="s-par-sub">—</div>
+    </div>
+    <div class="sc tappable" onclick="toggleType('spread')" role="button" tabindex="0">
+      <div class="sc-lbl">Spreads</div>
+      <div class="sc-val" id="s-spr">—</div>
+      <div class="sc-sub" id="s-spr-sub">—</div>
+    </div>
+  </div>
+
+  <!-- ── Equity curve (full width) ── -->
+  <div class="cc">
+    <div class="ct" style="display:flex;justify-content:space-between">
+      <span>Equity Curve — Running P&L</span>
+      <span id="eq-dd" style="text-transform:none;letter-spacing:0;font-weight:500"></span>
+    </div>
+    <div class="cw" style="height:260px"><canvas id="c-eq"></canvas></div>
+  </div>
+
+  <!-- ── Monthly Calendar ── -->
+  <div class="tcard">
+    <div class="thead">
+      <span class="ct" style="margin:0" id="cal-title">Calendar</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="cal-sum" style="color:var(--muted);font-size:11px"></span>
+        <div style="display:flex;gap:4px">
+          <button class="ref" id="cal-prev" onclick="calNav(-1)">‹ Prev</button>
+          <button class="ref" id="cal-curr" onclick="calNav(0)">This Month</button>
+          <button class="ref" id="cal-next" onclick="calNav(1)" disabled>Next ›</button>
+        </div>
+      </div>
+    </div>
+    <div style="padding:14px"><div class="cal-wrap" id="cal-grid"></div></div>
+  </div>
+
+  <!-- ── Pending bets ── -->
+  <!-- ── Live Now ── -->
+  <div class="tcard" id="live-section" style="display:none">
+    <div class="thead">
+      <span class="ct" style="margin:0"><span class="live-dot"></span>Live Now</span>
+      <span class="ct" id="live-count" style="margin:0"></span>
+    </div>
+    <div id="live-rows"></div>
+  </div>
+
+  <div class="tcard" id="pend-section">
+    <div class="thead">
+      <span class="ct" style="margin:0">Pending Bets</span>
+      <span id="pend-hdr" style="color:var(--amber);font-size:11px"></span>
+    </div>
+    <div id="pend-body"></div>
+  </div>
+
+  <!-- ── Closing Line Value ── -->
+  <div class="tcard" id="clv-section" style="display:none">
+    <div class="thead">
+      <span class="ct" style="margin:0">Closing Line Value</span>
+      <span id="clv-note" style="color:var(--muted);font-size:11px">beat the close = real edge</span>
+    </div>
+    <div class="clv-body">
+      <div style="padding:22px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
+        <div class="clv-lbl" style="margin-bottom:8px">Average CLV</div>
+        <div class="clv-num" id="clv-avg" style="font-size:52px">—</div>
+        <div class="clv-lbl" style="margin-top:8px;text-transform:none;letter-spacing:0;font-weight:500" id="clv-n">—</div>
+        <div id="clv-ev" style="margin-top:14px;font-size:12px;color:var(--label);line-height:1.7"></div>
+      </div>
+      <div style="padding:14px;border-left:1px solid var(--border)">
+        <div class="ct" style="margin-bottom:10px">Avg CLV by Sport</div>
+        <div id="clv-sports"></div>
+        <div class="ct" style="margin:16px 0 10px">Avg CLV by Book</div>
+        <div id="clv-books"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Monthly P&L + W/L/P ── -->
+  <div class="two-col">
+    <div class="cc" style="margin:0">
+      <div class="ct">Monthly P&L</div>
+      <div class="cw" style="height:200px"><canvas id="c-monthly"></canvas></div>
+    </div>
+    <div class="cc" style="margin:0">
+      <div class="ct">Net by Bet Type</div>
+      <div class="cw" style="height:200px"><canvas id="c-type"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Trends: hottest & coldest segments L30 ── -->
+  <div class="tcard" id="trends-section" style="display:none">
+    <div class="thead">
+      <span class="ct" style="margin:0">Trends — Last 30 Days</span>
+      <span style="color:var(--muted);font-size:11px">min 4 bets per segment</span>
+    </div>
+    <div class="clv-body" style="grid-template-columns:1fr 1fr">
+      <div style="padding:14px">
+        <div class="ct" style="margin-bottom:10px;color:var(--green)">🔥 Hottest</div>
+        <div id="tr-hot"></div>
+      </div>
+      <div style="padding:14px;border-left:1px solid var(--border)">
+        <div class="ct" style="margin-bottom:10px;color:var(--red)">🧊 Coldest</div>
+        <div id="tr-cold"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Odds Range + Stake Size: where the edge actually lives ── -->
+  <div class="two-col">
+    <div class="cc" style="margin:0">
+      <div class="ct">Net by Odds Range</div>
+      <div class="cw" style="height:200px"><canvas id="c-odds"></canvas></div>
+    </div>
+    <div class="cc" style="margin:0">
+      <div class="ct">Net by Stake Size</div>
+      <div class="cw" style="height:200px"><canvas id="c-stake"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Sport + Sportsbook charts ── -->
+  <div class="two-col">
+    <div class="cc" style="margin:0">
+      <div class="ct">Net by Sport</div>
+      <div class="cw" style="height:200px"><canvas id="c-sport"></canvas></div>
+    </div>
+    <div class="cc" style="margin:0">
+      <div class="ct">Net by Sportsbook</div>
+      <div class="cw" style="height:200px"><canvas id="c-book"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Sport × Bet Type Matrix ── -->
+  <div class="tcard">
+    <div class="thead">
+      <span class="ct" style="margin:0">Net P&L — Sport × Bet Type</span>
+      <span style="color:var(--muted);font-size:11px">green = +  red = −</span>
+    </div>
+    <div style="padding:12px" class="matrix-scroll">
+      <table class="matrix" id="mat-tbl"></table>
+    </div>
+  </div>
+
+  <!-- ── Recent Bets ── -->
+  <div class="tcard">
+    <div class="thead">
+      <span class="ct" style="margin:0">Recent Bets</span>
+      <span id="t-count" style="color:var(--muted);font-size:11px"></span>
+    </div>
+    <div class="tscroll">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Description</th><th>Type</th>
+          <th>Book</th><th>Odds</th><th>Stake</th><th>Status</th><th>Profit</th>
+        </tr></thead>
+        <tbody id="t-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+</main>
+
+<!-- day drill-down sheet -->
+<div id="sheet-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+  z-index:200;backdrop-filter:blur(2px)" onclick="closeSheet()"></div>
+<div id="sheet" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:201;
+  background:var(--s1);border-top:1px solid var(--border);border-radius:16px 16px 0 0;
+  max-height:70vh;overflow-y:auto;padding:18px 16px calc(18px + env(safe-area-inset-bottom))">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <span class="ct" style="margin:0" id="sheet-title">—</span>
+    <button class="ref" onclick="closeSheet()">✕ Close</button>
+  </div>
+  <div id="sheet-body"></div>
+</div>
+
+<script>
+const SID='1Ynawm1kVditvEmgaOWUdBbhIgi-dnunKguOAzc6wUEQ';
+let user='Zach', CH={};
+
+const C={
+  DATE:0,SETTLED:1,USER:2,GRP:3,DESC:4,SPORT:5,LEAGUE:6,
+  BOOK:7,TYPE:8,PROP:9,LEGS:10,ODDS:11,STAKE:12,WIN:13,
+  STATUS:14,PROFIT:15,ROI:16,CUM:17,STREAK:18,MSGID:19,LIVE:20,CLOSE:21,CLV:22,GAME:23
+};
+
+// ── Date parser ────────────────────────────────────────────────────────
+function parseDate(s){
+  if(!s) return null;
+  if(s instanceof Date) return isNaN(s)?null:s;
+  s=s.toString().trim();
+  let m=s.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if(m){
+    let[,date,h,min,ap]=m; h=parseInt(h); min=parseInt(min);
+    if(ap){if(ap.toUpperCase()==='PM'&&h!==12)h+=12;if(ap.toUpperCase()==='AM'&&h===12)h=0;}
+    return new Date(`${date}T${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}:00`);
+  }
+  m=s.match(/^(\d{4}-\d{2}-\d{2})$/);
+  if(m) return new Date(m[1]+'T00:00:00');
+  const d=new Date(s); return isNaN(d)?null:d;
+}
+
+// ── Formatters ─────────────────────────────────────────────────────────
+function fmtMoney(n,sign=true){
+  if(n==null||isNaN(n)) return '—';
+  const abs=Math.abs(n);
+  const s=abs>=1000
+    ? '$'+Math.round(abs).toLocaleString('en-US')
+    : '$'+abs.toFixed(2);
+  if(sign) return (n>=0?'+':'-')+s;
+  return (n<0?'-':'')+s;
+}
+function fmtPct(n){return n==null?'—':n.toFixed(1)+'%';}
+function toAmerican(n){
+  if(Math.abs(n)>=100) return n;
+  if(n>=1&&n<100){const p=n/100;return p>=0.5?-Math.round(p/(1-p)*100):+Math.round((1-p)/p*100);}
+  if(n>0&&n<1){return n>=0.5?-Math.round(n/(1-n)*100):+Math.round((1-n)/n*100);}
+  return n;
+}
+function fmtOdds(n){
+  if(n==null||isNaN(Number(n))) return '—';
+  const raw=Number(n), am=toAmerican(raw);
+  const s=am>0?'+'+am:String(am);
+  return Math.abs(raw)<100&&Math.abs(raw)>0?s+' ('+raw+'%)':s;
+}
+
+// ── Normalizers ────────────────────────────────────────────────────────
+function normStr(s){
+  if(!s||s==='null') return null;
+  s=s.toString().trim(); if(!s) return null;
+  return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();
+}
+function normBook(s){
+  if(!s||s==='null') return null; s=s.toString().trim(); if(!s) return null;
+  const m={'novig':'Novig','draftkings':'DraftKings','fanduel':'FanDuel','betmgm':'BetMGM',
+    'caesars':'Caesars','kalshi':'Kalshi','espn bet':'ESPN BET','prizepicks':'PrizePicks',
+    'underdog':'Underdog','polymarket':'Polymarket','prophetx':'ProphetX'};
+  return m[s.toLowerCase()]||s;
+}
+function normSport(s){
+  if(!s||s==='null') return null; s=s.toString().trim(); if(!s) return null;
+  const lower=s.toLowerCase();
+  // Merge any soccer-related combos into Soccer
+  if(lower.includes('soccer')) return 'Soccer';
+  // Merge any tennis-only into Tennis
+  if(lower.includes('tennis')&&!lower.includes('soccer')) return 'Tennis';
+  // Title case standard sports
+  const map={'football':'Football','basketball':'Basketball','baseball':'Baseball',
+    'hockey':'Hockey','mma':'MMA','golf':'Golf','other':'Other'};
+  return map[lower]||(s.charAt(0).toUpperCase()+s.slice(1));
+}
+
+// ── Effective profit (uses calculation when stored value missing) ──────
+// ── CLV%: value of your entry price vs the closing price ──
+function clvPct(entryRaw, closeRaw){
+  if(entryRaw==null||closeRaw==null||entryRaw===''||closeRaw==='') return null;
+  const e=toAmerican(Number(entryRaw)), c=toAmerican(Number(closeRaw));
+  if(isNaN(e)||isNaN(c)||e===0||c===0) return null;
+  const de=e>0?e/100+1:100/Math.abs(e)+1;
+  const dc=c>0?c/100+1:100/Math.abs(c)+1;
+  return (de/dc-1)*100;
+}
+
+function effProfit(r){
+  const v=r[C.PROFIT];
+  if(v!=null&&v!==''&&!isNaN(Number(v))) return Number(v);
+  const st=r[C.STATUS],stake=r[C.STAKE],odds=r[C.ODDS];
+  if(st==='lost'&&stake!=null) return -Number(stake);
+  if(st==='push') return 0;
+  if(st==='won'&&stake!=null&&odds!=null){
+    const o=toAmerican(Number(odds));
+    return o>0?Number(stake)*(o/100):Number(stake)*(100/Math.abs(o));
+  }
+  if(st==='won'&&r[C.WIN]!=null) return Number(r[C.WIN]);
+  return 0;
+}
+
+// ── Switch user ────────────────────────────────────────────────────────
+function switchUser(u,el){
+  user=u;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  el.classList.add('on');
+  loadData();
+}
+
+// ── Fetch & parse ──────────────────────────────────────────────────────
+let LAST_ROWS=null, RANGE='all', TYPE_FILTER=null;
+function closeSheet(){document.getElementById('sheet').style.display='none';
+  document.getElementById('sheet-bg').style.display='none';}
+function openDay(iso){
+  if(!LAST_ROWS) return;
+  const day=new Date(iso+'T00:00:00');
+  const next=new Date(day); next.setDate(next.getDate()+1);
+  const bets=LAST_ROWS.filter(r=>{
+    const st=(r[C.STATUS]||'').toString().toLowerCase();
+    if(st==='pending') return false;
+    const d=parseDate(r[C.SETTLED]||r[C.DATE]);
+    return d&&d>=day&&d<next;});
+  if(!bets.length) return;
+  const net=bets.reduce((s,r)=>s+effProfit(r),0);
+  document.getElementById('sheet-title').textContent=
+    day.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})
+    +'  ·  '+fmtMoney(net);
+  document.getElementById('sheet-body').innerHTML=bets.map(r=>{
+    const st=(r[C.STATUS]||'').toString().toLowerCase();
+    const p=effProfit(r);
+    const em=st==='won'?'✅':st==='lost'?'❌':'↩️';
+    return `<div style="display:flex;justify-content:space-between;gap:10px;padding:10px 2px;
+      border-bottom:1px solid var(--border);font-size:13px">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${em} ${r[C.DESC]||'—'}</span>
+      <span class="${p>0?'pos':p<0?'neg':''}" style="font-weight:600;white-space:nowrap">${fmtMoney(p)}</span>
+    </div>`;}).join('');
+  document.getElementById('sheet').style.display='block';
+  document.getElementById('sheet-bg').style.display='block';
+}
+function setRange(r){RANGE=r;
+  document.querySelectorAll('.rng').forEach(b=>b.classList.toggle('on',b.dataset.r===r));
+  if(LAST_ROWS) render(LAST_ROWS);}
+function toggleType(t){TYPE_FILTER=(TYPE_FILTER===t)?null:t;
+  if(LAST_ROWS) render(LAST_ROWS);}
+
+async function loadData(){
+  document.getElementById('loading').style.display='block';
+  document.getElementById('dash').style.display='none';
+  try{
+    const url=`https://docs.google.com/spreadsheets/d/${SID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(user)}&headers=1`;
+    const text=await fetch(url).then(r=>r.text());
+    if(text.includes('not found')||!text.includes('setResponse'))
+      throw new Error(`Sheet "${user}" not found`);
+    const json=JSON.parse(text.match(/setResponse\(([\s\S]*)\)/)[1]);
+    const rows=(json.table.rows||[]).map(r=>(r.c||[]).map(c=>{
+      if(!c||c.v==null) return null;
+      if(typeof c.v==='string'&&c.v.startsWith('Date(')){
+        const p=c.v.slice(5,-1).split(',').map(Number);
+        return new Date(p[0],p[1],p[2],p[3]||0,p[4]||0);
+      }
+      return c.v;
+    })).filter(r=>r[C.STATUS]&&r[C.STATUS]!=='Status');
+    LAST_ROWS=rows; render(rows);
+    document.getElementById('loading').style.display='none';
+    document.getElementById('dash').style.display='block';
+    document.getElementById('foot').textContent='Updated '+new Date().toLocaleTimeString()+' · auto-refreshes every 10 min';
+  }catch(e){
+    document.getElementById('loading').innerHTML=
+      `<div style="color:var(--red);padding:40px;text-align:center">
+        <div style="font-size:36px;margin-bottom:10px">⚠️</div>
+        <b>Could not load "${user}"</b><br><br>
+        <span style="color:var(--muted);font-size:12px">${e.message}</span><br><br>
+        <button class="ref" onclick="loadData()" style="color:var(--blue);border-color:var(--blue)">↻ Retry</button>
+       </div>`;
+    console.error(e);
+  }
+}
+
+// ── Group by field → sum effProfit ─────────────────────────────────────
+function groupProfit(rows,col,norm){
+  const map={};
+  rows.forEach(r=>{
+    const k=norm?norm(r[col]):normStr(r[col]);
+    if(!k||k==='Null') return;
+    map[k]=(map[k]||0)+effProfit(r);
+  });
+  return Object.entries(map).filter(([,v])=>v!==0).sort((a,b)=>b[1]-a[1]);
+}
+
+// ── Horizontal bar chart ───────────────────────────────────────────────
+function mkBar(id,labels,vals){
+  if(CH[id]) CH[id].destroy();
+  CH[id]=new Chart(document.getElementById(id).getContext('2d'),{
+    type:'bar',
+    data:{labels,datasets:[{data:vals,backgroundColor:vals.map(v=>v>=0?'#00D68F':'#FF4D4D'),
+      borderRadius:4,borderSkipped:false,maxBarThickness:28}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtMoney(c.raw)}}},
+      scales:{
+        x:{grid:{color:'#1C2535'},ticks:{color:'#4A5568',font:{size:10},callback:v=>fmtMoney(v)}},
+        y:{grid:{display:false},ticks:{color:'#8892A4',font:{size:11}}}
+      }
+    }
+  });
+}
+
+// ── Scorecard helper ───────────────────────────────────────────────────
+function typeCard(valId,subId,bets){
+  const w=bets.filter(r=>r[C.STATUS]==='won').length;
+  const l=bets.filter(r=>r[C.STATUS]==='lost').length;
+  const net=bets.reduce((s,r)=>s+effProfit(r),0);
+  const stk=bets.reduce((s,r)=>s+(r[C.STAKE]||0),0);
+  const roiT=stk>0?net/stk*100:0;
+  const el=document.getElementById(valId);
+  el.textContent=bets.length?`${w}-${l}`:'—';
+  el.className='sc-val '+(net>0?'pos':net<0?'neg':'neu');
+  // the accent bar reports performance, it doesn't decorate
+  const card=el.closest('.sc');
+  if(card) card.style.setProperty('--a',
+    net>0?'var(--green)':net<0?'var(--red)':'var(--border)');
+  const sub=document.getElementById(subId);
+  // ROI% is the edge signal — win% lies at different odds
+  sub.textContent=bets.length?fmtMoney(net)+'  ·  '+(roiT>=0?'+':'')+roiT.toFixed(1)+'% ROI':'no bets yet';
+  sub.className='sc-sub '+(net>0?'pos':net<0?'neg':'');
+}
+
+// ── Main render ────────────────────────────────────────────────────────
+function render(rows){
+  const allSettled=rows.filter(r=>r[C.STATUS]!=='pending');
+  // range scope
+  let rangeScoped=allSettled;
+  if(RANGE!=='all'){
+    const cut=new Date(); cut.setDate(cut.getDate()-Number(RANGE));
+    rangeScoped=allSettled.filter(r=>{const d=parseDate(r[C.SETTLED]||r[C.DATE]);return d&&d>=cut;});
+  }
+  // type filter (from tapping a type card)
+  const settled=TYPE_FILTER
+    ? rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()===TYPE_FILTER)
+    : rangeScoped;
+  const pending=rows.filter(r=>r[C.STATUS]==='pending');
+  const won=settled.filter(r=>r[C.STATUS]==='won');
+  const lost=settled.filter(r=>r[C.STATUS]==='lost');
+  const push=settled.filter(r=>r[C.STATUS]==='push');
+
+  const netPnL=settled.reduce((s,r)=>s+effProfit(r),0);
+  const staked=settled.reduce((s,r)=>s+(r[C.STAKE]||0),0);
+  const roi=staked>0?(netPnL/staked*100):0;
+  const wr=(won.length+lost.length)>0?won.length/(won.length+lost.length)*100:0;
+  const risk=pending.reduce((s,r)=>s+(r[C.STAKE]||0),0);
+  const upside=pending.reduce((s,r)=>s+(r[C.WIN]||0),0);
+
+  // ── Scorecards ──────────────────────────────────────────────────────
+  const pnlEl=document.getElementById('s-pnl');
+  pnlEl.textContent=fmtMoney(netPnL);
+  pnlEl.className='sc-val '+(netPnL>=0?'pos':'neg');
+  // ── today strip: the "what's happening now" answer ──
+  const t0=new Date(); t0.setHours(0,0,0,0);
+  const todayBets=allSettled.filter(r=>{const d=parseDate(r[C.SETTLED]||r[C.DATE]);return d&&d>=t0;});
+  const todayNet=todayBets.reduce((s,r)=>s+effProfit(r),0);
+  const tw=todayBets.filter(r=>r[C.STATUS]==='won').length;
+  const tl=todayBets.filter(r=>r[C.STATUS]==='lost').length;
+  const pendRows=rows.filter(r=>(r[C.STATUS]||'').toString().toLowerCase()==='pending');
+  const pendRisk=pendRows.reduce((s,r)=>s+(Number(r[C.STAKE])||0),0);
+  const parts=[];
+  if(todayBets.length) parts.push(`Today: <b>${tw}-${tl}</b> · <b class="${todayNet>=0?'pos':'neg'}">${fmtMoney(todayNet)}</b>`);
+  const liveNow=pendRows.filter(r=>{
+    const gt=parseDate(r[C.GAME]); if(!gt) return false;
+    const hrs=(new Date()-gt)/36e5; return hrs>=0&&hrs<4.5;});
+  if(liveNow.length) parts.push(`<span class="live-dot"></span><b style="color:var(--red)">${liveNow.length} LIVE</b>`);
+  if(pendRows.length) parts.push(`Pending: <b>${pendRows.length}</b> bet${pendRows.length>1?'s':''} · <b style="color:var(--amber)">$${pendRisk.toFixed(0)}</b> at risk`);
+  if(!parts.length) parts.push('<span style="color:var(--muted)">No action today — the board is clean</span>');
+  if(TYPE_FILTER) parts.push(`<span class="filter-pill" onclick="toggleType(TYPE_FILTER)">filtering: ${TYPE_FILTER}s ✕</span>`);
+  document.getElementById('today-strip').innerHTML=parts.join('<span class="ts-sep">|</span>');
+
+  const d30=new Date(); d30.setDate(d30.getDate()-30);
+  const l30net=settled.filter(r=>{const d=parseDate(r[C.DATE]);return d&&d>=d30;})
+    .reduce((s,r)=>s+effProfit(r),0);
+  const pnlSub=document.getElementById('s-pnl-sub');
+  pnlSub.innerHTML=fmtPct(roi)+' ROI  ·  L30: <span class="'+(l30net>=0?'pos':'neg')+'">'+fmtMoney(l30net)+'</span>';
+  pnlSub.className='sc-sub';
+
+  document.getElementById('s-pend').textContent=pending.length||'0';
+  document.getElementById('s-pend-sub').textContent=pending.length
+    ?'risk $'+risk.toFixed(0)+'  ·  upside +$'+upside.toFixed(0):'nothing open';
+
+  const roiEl=document.getElementById('s-roi');
+  roiEl.textContent=fmtPct(roi);
+  roiEl.className='sc-val '+(roi>=5?'pos':roi<0?'neg':'neu');
+  roiEl.closest('.sc').style.setProperty('--a',
+    roi>0?'var(--green)':roi<0?'var(--red)':'var(--border)');
+  // rolling ROI windows: is the edge holding up or coasting on old wins?
+  function rollROI(days){
+    const cut=new Date(); cut.setDate(cut.getDate()-days);
+    const bs=allSettled.filter(r=>{const d=parseDate(r[C.SETTLED]||r[C.DATE]);return d&&d>=cut;});
+    const n=bs.reduce((s,r)=>s+effProfit(r),0), st=bs.reduce((s,r)=>s+(r[C.STAKE]||0),0);
+    return st>0?(n/st*100):null;
+  }
+  const rr=[30,60,90].map(d=>{const v=rollROI(d);
+    return d+'d '+(v==null?'—':'<span class="'+(v>=0?'pos':'neg')+'">'+(v>=0?'+':'')+v.toFixed(1)+'%</span>');});
+  document.getElementById('s-roi-sub').innerHTML=rr.join('  ·  ');
+
+  const recEl=document.getElementById('s-rec');
+  recEl.textContent=`${won.length}-${lost.length}`;
+  recEl.className='sc-val '+(wr>=52?'pos':wr<50?'neg':'neu');
+  const last10=[...settled].sort((a,b)=>(parseDate(b[C.DATE])||0)-(parseDate(a[C.DATE])||0)).slice(0,10);
+  const l10w=last10.filter(r=>r[C.STATUS]==='won').length;
+  const l10l=last10.filter(r=>r[C.STATUS]==='lost').length;
+  document.getElementById('s-rec-sub').textContent=
+    fmtPct(wr)+' win  ·  last 10: '+l10w+'-'+l10l;
+
+  typeCard('s-ml','s-ml-sub',rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()==='moneyline'));
+  typeCard('s-prop','s-prop-sub',rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()==='prop'));
+  typeCard('s-tot','s-tot-sub',rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()==='total'));
+  typeCard('s-par','s-par-sub',rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()==='parlay'));
+  typeCard('s-spr','s-spr-sub',rangeScoped.filter(r=>(r[C.TYPE]||'').toString().toLowerCase()==='spread'));
+  // visually mark the active type filter
+  const typeIds={moneyline:'s-ml',prop:'s-prop',total:'s-tot',parlay:'s-par',spread:'s-spr'};
+  Object.entries(typeIds).forEach(([t,id])=>{
+    const card=document.getElementById(id).closest('.sc');
+    if(card) card.classList.toggle('filter-on', TYPE_FILTER===t);
+  });
+
+  // ── Equity curve ────────────────────────────────────────────────────
+  let running=0;
+  const eqPts=settled
+    .map(r=>({d:parseDate(r[C.DATE]),p:effProfit(r)}))
+    .filter(p=>p.d&&!isNaN(p.d))
+    .sort((a,b)=>a.d-b.d)
+    .map(p=>{running+=p.p;return{d:p.d,v:Math.round(running*100)/100};});
+
+  // signature: the equity curve alive inside the hero card
+  (function(){
+    const cv=document.getElementById('spark');
+    if(!cv||eqPts.length<2) return;
+    const dpr=window.devicePixelRatio||1;
+    const w=cv.offsetWidth,h=56;
+    cv.width=w*dpr; cv.height=h*dpr;
+    const x=cv.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,w,h);
+    const pts=eqPts.slice(-60);
+    const vals=pts.map(p=>p.v);
+    const lo=Math.min(...vals,0), hi=Math.max(...vals,1);
+    const X=i=>i/(pts.length-1)*w;
+    const Y=v=>h-6-((v-lo)/(hi-lo||1))*(h-12);
+    const g=x.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,'rgba(0,214,143,.28)'); g.addColorStop(1,'rgba(0,214,143,0)');
+    x.beginPath(); x.moveTo(0,h);
+    pts.forEach((p,i)=>x.lineTo(X(i),Y(p.v)));
+    x.lineTo(w,h); x.closePath(); x.fillStyle=g; x.fill();
+    x.beginPath();
+    pts.forEach((p,i)=>i?x.lineTo(X(i),Y(p.v)):x.moveTo(X(i),Y(p.v)));
+    x.strokeStyle='rgba(0,214,143,.85)'; x.lineWidth=1.5; x.stroke();
+    const li=pts.length-1;
+    x.beginPath(); x.arc(X(li),Y(pts[li].v),2.5,0,7);
+    x.fillStyle='#00D68F'; x.fill();
+  })();
+
+  // drawdown stats
+  let peak=0,maxDD=0;
+  eqPts.forEach(p=>{if(p.v>peak)peak=p.v;const dd=peak-p.v;if(dd>maxDD)maxDD=dd;});
+  const curDD=eqPts.length?peak-eqPts[eqPts.length-1].v:0;
+  const ddEl=document.getElementById('eq-dd');
+  if(ddEl) ddEl.innerHTML='max drawdown <span class="neg">-$'+maxDD.toFixed(0)+'</span>'+
+    (curDD>1?'  ·  now <span class="neg">-$'+curDD.toFixed(0)+'</span> off peak'
+            :'  ·  <span class="pos">at peak</span>');
+
+  if(CH['c-eq']) CH['c-eq'].destroy();
+  const ctx=document.getElementById('c-eq').getContext('2d');
+  const grad=ctx.createLinearGradient(0,0,0,260);
+  grad.addColorStop(0,'rgba(0,214,143,0.3)'); grad.addColorStop(1,'rgba(0,214,143,0)');
+  const step=Math.max(1,Math.floor(eqPts.length/60));
+  const lbls=eqPts.map(p=>p.d.toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+  const tickLbls=lbls.map((l,i)=>i%step===0?l:'');
+  CH['c-eq']=new Chart(ctx,{
+    type:'line',
+    data:{labels:lbls,datasets:[{data:eqPts.map(p=>p.v),borderColor:'#00D68F',
+      backgroundColor:grad,borderWidth:2,fill:true,tension:0.3,
+      pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:'#00D68F'}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        title:i=>lbls[i[0].dataIndex]||'',label:i=>fmtMoney(i.raw)}}},
+      scales:{
+        x:{grid:{color:'#1C2535'},ticks:{color:'#4A5568',font:{size:10},maxTicksLimit:8,callback:(v,i)=>tickLbls[i]||null}},
+        y:{grid:{color:'#1C2535'},ticks:{color:'#4A5568',font:{size:10},callback:v=>fmtMoney(v,false)},
+          afterDataLimits(s){if(s.min>0)s.min=0;if(s.max<0)s.max=0;}}
+      }
+    }
+  });
+
+  // ── Store data globally for calendar nav ────────────────────────────
+  window._allSettled = allSettled;
+
+  // ── Calendar (current month by default) ──────────────────────────────
+  const now=new Date();
+  if(window._calOffset===undefined) window._calOffset=0;
+  renderCalendar(settled, window._calOffset);
+
+  // ── Pending bets ─────────────────────────────────────────────────────
+  // ── Live Now: pending bets whose games are in progress ──
+  const nowT=new Date();
+  const isLive=r=>{
+    const gt=parseDate(r[C.GAME]);
+    if(!gt) return false;
+    const hrs=(nowT-gt)/36e5;
+    return hrs>=0 && hrs<4.5;   // started, not stale
+  };
+  const liveBets=pending.filter(isLive);
+  const liveSec=document.getElementById('live-section');
+  if(liveBets.length){
+    liveSec.style.display='block';
+    document.getElementById('live-count').textContent=liveBets.length+' in progress';
+    document.getElementById('live-rows').innerHTML=liveBets.map(r=>{
+      const gt=parseDate(r[C.GAME]);
+      const mins=Math.round((nowT-gt)/6e4);
+      const stake=r[C.STAKE], tw=r[C.WIN];
+      const oddsRaw=r[C.ODDS];
+      const oddsStr=oddsRaw!=null&&!isNaN(Number(oddsRaw))?fmtOdds(oddsRaw):'';
+      return `<div class="pend-row">
+        <div class="pend-desc" title="${(r[C.DESC]||'').replace(/"/g,'')}">${r[C.DESC]||'—'}</div>
+        <div class="pend-meta"><span style="color:var(--red);font-weight:700">LIVE</span> · started ${mins<60?mins+'m':Math.floor(mins/60)+'h '+(mins%60)+'m'} ago</div>
+        <div class="pend-odds"><div class="po-entry">${oddsStr||'—'}</div></div>
+        <div class="pend-stake">${stake!=null?'$'+Number(stake).toFixed(2):'—'}</div>
+        <div class="pend-win">${tw!=null&&!isNaN(Number(tw))?'+$'+Number(tw).toFixed(2):'—'}</div>
+      </div>`;}).join('');
+  } else liveSec.style.display='none';
+
+  // upcoming = pending minus live
+  const upcoming=pending.filter(r=>!isLive(r));
+
+  const ps=document.getElementById('pend-section');
+  if(!upcoming.length){ps.style.display='none';}
+  else{
+    ps.style.display='block';
+    const upRisk=upcoming.reduce((s,r)=>s+(Number(r[C.STAKE])||0),0);
+    const upUpside=upcoming.reduce((s,r)=>s+(Number(r[C.WIN])||0),0);
+    document.getElementById('pend-hdr').textContent=`${upcoming.length} open  ·  risk $${upRisk.toFixed(0)}  ·  upside +$${upUpside.toFixed(0)}`;
+    const sorted=[...upcoming].sort((a,b)=>(parseDate(b[C.DATE])||0)-(parseDate(a[C.DATE])||0));
+    document.getElementById('pend-body').innerHTML=sorted.map(r=>{
+      const bt=(r[C.TYPE]||'').toString().trim();
+      const legs=r[C.LEGS]?Number(r[C.LEGS]):0;
+      let typeStr=bt||(legs>1?`Parlay (${legs}L)`:'');
+      if(bt.toLowerCase()==='parlay'&&legs>1) typeStr=`Parlay (${legs}L)`;
+      const toWin=r[C.WIN],stake=r[C.STAKE],oddsRaw=r[C.ODDS];
+      let oddsStr='';
+      if(oddsRaw!=null) oddsStr=fmtOdds(oddsRaw);
+      else if(toWin!=null&&stake!=null&&Number(stake)>0){
+        const imp=Number(toWin)/Number(stake);
+        oddsStr=(imp>=1?'+':'-')+Math.round(imp>=1?imp*100:100/imp)+'*';
+      } else if(bt.toLowerCase()==='parlay') oddsStr='parlay';
+      let twStr='—';
+      if(toWin!=null&&toWin>0) twStr='+$'+Number(toWin).toFixed(2);
+      else if(oddsRaw!=null&&stake!=null){
+        const o=toAmerican(Number(oddsRaw));
+        twStr='+$'+(o>0?Number(stake)*(o/100):Number(stake)*(100/Math.abs(o))).toFixed(2)+'*';
+      }
+      const sport=normSport(r[C.SPORT])||"";
+      const book=normBook(r[C.BOOK])||'';
+      // odds cell: entry on top, live below with direction
+      let oddsCell='<div class="po-entry">'+(oddsStr||'—')+'</div>';
+      const lv=r[C.LIVE];
+      if(lv!=null&&!isNaN(Number(lv))&&oddsRaw!=null){
+        const la=toAmerican(Number(lv)), ea=toAmerican(Number(oddsRaw));
+        const li=la>0?100/(la+100):-la/(-la+100);
+        const ei=ea>0?100/(ea+100):-ea/(-ea+100);
+        const diff=(li-ei)*100;
+        const cls=diff>0.5?'po-up':diff<-0.5?'po-down':'po-flat';
+        const arrow=diff>0.5?'▲':diff<-0.5?'▼':'·';
+        oddsCell+=`<div class="po-live ${cls}">now ${fmtOdds(lv)} ${arrow}</div>`;
+      } else {
+        oddsCell+='<div class="po-live po-flat">no line yet</div>';
+      }
+      const meta=[sport,typeStr,book].filter(Boolean).join(' · ');
+      return `<div class="pend-row">
+        <div class="pend-desc" title="${(r[C.DESC]||'').replace(/"/g,'')}">${r[C.DESC]||'—'}</div>
+        <div class="pend-meta">${meta||'—'}</div>
+        <div class="pend-odds">${oddsCell}</div>
+        <div class="pend-stake">${stake!=null?'$'+Number(stake).toFixed(2):'—'}</div>
+        <div class="pend-win">${twStr}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Closing Line Value section ───────────────────────────────────────
+  const clvSec=document.getElementById('clv-section');
+  const clvBets=settled
+    .map(r=>({clv:clvPct(r[C.ODDS], r[C.CLOSE]), d:parseDate(r[C.DATE]), desc:r[C.DESC]||''}))
+    .filter(b=>b.clv!=null&&!isNaN(b.clv))
+    .sort((a,b)=>(a.d||0)-(b.d||0));
+  if(!clvBets.length){
+    clvSec.style.display='none';
+    document.getElementById('s-clv').textContent='—';
+    document.getElementById('s-clv').className='sc-val neu';
+    document.getElementById('s-clv-sub').textContent='captures start pre-game';
+  } else {
+    clvSec.style.display='block';
+    const avg=clvBets.reduce((s,b)=>s+b.clv,0)/clvBets.length;
+    const avgEl=document.getElementById('clv-avg');
+    avgEl.textContent=(avg>=0?'+':'')+avg.toFixed(1)+'%';
+    avgEl.className='clv-num '+(avg>0?'pos':avg<0?'neg':'neu');
+    document.getElementById('clv-n').textContent=clvBets.length+' tracked bets';
+    // headline card
+    const cardV=document.getElementById('s-clv');
+    cardV.textContent=(avg>=0?'+':'')+avg.toFixed(1)+'%';
+    cardV.className='sc-val '+(avg>0?'pos':avg<0?'neg':'neu');
+    cardV.closest('.sc').style.setProperty('--a',
+      avg>0?'var(--green)':avg<0?'var(--red)':'var(--border)');
+    const cardS=document.getElementById('s-clv-sub');
+    cardS.textContent=clvBets.length+' closes  ·  '+(avg>0?'beating the market':'behind the close');
+    cardS.className='sc-sub '+(avg>0?'pos':avg<0?'neg':'');
+    document.getElementById('clv-note').textContent=
+      avg>0?'you\u2019re beating the close \u2014 edge is real':'avg below close \u2014 entries lagging the market';
+
+    // #4 luck vs skill: expected P&L from closing-line probabilities
+    let expSum=0, actSum=0, evN=0;
+    settled.forEach(r=>{
+      const st=r[C.STATUS];
+      if(st!=='won'&&st!=='lost') return;
+      const close=r[C.CLOSE], entry=r[C.ODDS], stake=Number(r[C.STAKE]);
+      if(close==null||close===''||Number(close)===0||entry==null||!stake) return;
+      const ca=toAmerican(Number(close)), ea=toAmerican(Number(entry));
+      if(isNaN(ca)||isNaN(ea)||ca===0||ea===0) return;
+      const p=ca<0?-ca/(-ca+100):100/(ca+100);              // true win prob from close
+      const winAmt=ea>0?stake*ea/100:stake*100/Math.abs(ea); // payout at YOUR price
+      expSum+=p*winAmt-(1-p)*stake;
+      actSum+=effProfit(r); evN++;
+    });
+    const evEl=document.getElementById('clv-ev');
+    if(evN>=10){
+      const luck=actSum-expSum;
+      evEl.innerHTML='Actual <b class="'+(actSum>=0?'pos':'neg')+'">'+fmtMoney(actSum)+'</b>'
+        +' vs expected <b class="'+(expSum>=0?'pos':'neg')+'">'+fmtMoney(expSum)+'</b><br>'
+        +'<span class="'+(luck>=0?'pos':'neg')+'">running '+fmtMoney(Math.abs(luck)).replace('+','').replace('-','')
+        +' '+(luck>=0?'hot':'cold')+'</span> over '+evN+' tracked bets';
+    } else evEl.textContent='';
+
+    // avg CLV by sport
+    const sportMap={};
+    settled.forEach(r=>{
+      const cv=clvPct(r[C.ODDS], r[C.CLOSE]);
+      if(cv==null||isNaN(cv)) return;
+      const sp=normSport(r[C.SPORT])||'Other';
+      if(!sportMap[sp]) sportMap[sp]={sum:0,n:0};
+      sportMap[sp].sum+=cv; sportMap[sp].n++;
+    });
+    const sportRows=Object.entries(sportMap)
+      .map(([sp,d])=>({sp,avg:d.sum/d.n,n:d.n}))
+      .sort((a,b)=>b.avg-a.avg);
+    document.getElementById('clv-sports').innerHTML=sportRows.length
+      ? sportRows.map(s=>`<div class="clv-sport">
+          <span class="clv-sport-name">${s.sp}<span class="clv-sport-n">${s.n} bets</span></span>
+          <span class="clv-sport-val ${s.avg>0?'pos':s.avg<0?'neg':'neu'}">${s.avg>=0?'+':''}${s.avg.toFixed(1)}%</span>
+        </div>`).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:8px 0">no data yet</div>';
+
+    // #6 avg CLV by sportsbook: where do you actually have edge?
+    const bookMap={};
+    settled.forEach(r=>{
+      const cv=clvPct(r[C.ODDS], r[C.CLOSE]);
+      if(cv==null||isNaN(cv)) return;
+      const bk=normBook(r[C.BOOK])||'Other';
+      if(!bookMap[bk]) bookMap[bk]={sum:0,n:0};
+      bookMap[bk].sum+=cv; bookMap[bk].n++;
+    });
+    const bookRows=Object.entries(bookMap)
+      .map(([bk,d])=>({bk,avg:d.sum/d.n,n:d.n}))
+      .sort((a,b)=>b.avg-a.avg).slice(0,6);
+    document.getElementById('clv-books').innerHTML=bookRows.length
+      ? bookRows.map(s=>`<div class="clv-sport">
+          <span class="clv-sport-name">${s.bk}<span class="clv-sport-n">${s.n} bets</span></span>
+          <span class="clv-sport-val ${s.avg>0?'pos':s.avg<0?'neg':'neu'}">${s.avg>=0?'+':''}${s.avg.toFixed(1)}%</span>
+        </div>`).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:8px 0">no data yet</div>';
+
+    }
+
+  // ── Monthly P&L ──────────────────────────────────────────────────────
+  const monthMap={},monthKey={};
+  allSettled.forEach(r=>{
+    // profit belongs to the month it actually settled, not when the bet was placed
+    const d=parseDate(r[C.SETTLED]||r[C.DATE]); if(!d||isNaN(d)) return;
+    const k=d.toLocaleDateString('en-US',{month:'long'});
+    const uk=d.getFullYear()*100+d.getMonth();
+    const key=k+'|'+uk;
+    monthMap[key]=(monthMap[key]||0)+effProfit(r);
+    if(!monthKey[key]) monthKey[key]=uk;
+  });
+  const months=Object.entries(monthMap).sort((a,b)=>monthKey[a[0]]-monthKey[b[0]])
+    .map(([key,v])=>[key.split('|')[0],v]);
+  if(CH['c-monthly']) CH['c-monthly'].destroy();
+  CH['c-monthly']=new Chart(document.getElementById('c-monthly').getContext('2d'),{
+    type:'bar',
+    data:{labels:months.map(e=>e[0]),datasets:[{data:months.map(e=>Math.round(e[1]*100)/100),
+      backgroundColor:months.map(e=>e[1]>=0?'#00D68F':'#FF4D4D'),
+      borderRadius:4,borderSkipped:false,maxBarThickness:60}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtMoney(c.raw)}}},
+      scales:{
+        x:{grid:{display:false},ticks:{color:'#8892A4',font:{size:10}}},
+        y:{grid:{color:'#1C2535'},ticks:{color:'#4A5568',font:{size:10},callback:v=>fmtMoney(v,false)}}
+      }
+    }
+  });
+
+  // ── Net by Bet Type ───────────────────────────────────────────────────
+  const td=groupProfit(settled,C.TYPE,normStr);
+  mkBar('c-type',td.map(d=>d[0]),td.map(d=>d[1]));
+
+  // ── Net by Sport ──────────────────────────────────────────────────────
+  const sd=groupProfit(settled,C.SPORT,normSport);
+  mkBar('c-sport',sd.map(d=>d[0]),sd.map(d=>d[1]));
+
+  // ── Net by Sportsbook ─────────────────────────────────────────────────
+  const bd=groupProfit(settled,C.BOOK,normBook);
+  mkBar('c-book',bd.map(d=>d[0]),bd.map(d=>d[1]));
+
+  // ── #5 Trends: segment performance over the last 30 days ─────────────
+  const trCut=new Date(); trCut.setDate(trCut.getDate()-30);
+  const trBets=settled.filter(r=>{const d=parseDate(r[C.SETTLED]||r[C.DATE]);return d&&d>=trCut;});
+  const segMap={};
+  trBets.forEach(r=>{
+    const prop=r[C.PROP]?String(r[C.PROP]).trim():'';
+    const sport=normSport(r[C.SPORT])||'';
+    const type=r[C.TYPE]?String(r[C.TYPE]).trim():'';
+    let seg=null;
+    if(prop&&prop!=='null') seg=prop.charAt(0).toUpperCase()+prop.slice(1)+' props';
+    else if(sport&&type) seg=sport+' '+type.toLowerCase()+'s';
+    if(!seg) return;
+    if(!segMap[seg]) segMap[seg]={w:0,l:0,net:0,stk:0};
+    const s=segMap[seg];
+    if(r[C.STATUS]==='won')s.w++; if(r[C.STATUS]==='lost')s.l++;
+    s.net+=effProfit(r); s.stk+=(r[C.STAKE]||0);
+  });
+  const segs=Object.entries(segMap)
+    .filter(([,s])=>s.w+s.l>=4)
+    .map(([k,s])=>({k,...s,roi:s.stk>0?s.net/s.stk*100:0}))
+    .sort((a,b)=>b.roi-a.roi);
+  const trSec=document.getElementById('trends-section');
+  if(segs.length>=2){
+    trSec.style.display='block';
+    const row=s=>`<div class="clv-sport">
+      <span class="clv-sport-name">${s.k}<span class="clv-sport-n">${s.w}-${s.l}</span></span>
+      <span class="clv-sport-val ${s.net>0?'pos':s.net<0?'neg':'neu'}">${fmtMoney(s.net)}<span style="font-size:11px;font-weight:500;opacity:.8"> · ${s.roi>=0?'+':''}${s.roi.toFixed(0)}%</span></span>
+    </div>`;
+    const hot=segs.slice(0,3);
+    const cold=segs.slice(3).slice(-3).reverse();   // never overlaps hot
+    document.getElementById('tr-hot').innerHTML=hot.map(row).join('');
+    document.getElementById('tr-cold').innerHTML=cold.length?cold.map(row).join('')
+      :'<div style="color:var(--muted);font-size:12px;padding:8px 0">nothing cold — everything\u2019s cooking</div>';
+  } else trSec.style.display='none';
+
+  // ── Net by Odds Range: are you a fav-layer or dog-hunter? ────────────
+  const oddsBuckets=[
+    ['Heavy fav (-200+)', a=>a<=-200],
+    ['Fav (-101 to -199)', a=>a<0&&a>-200],
+    ['Small dog (+100-149)', a=>a>=100&&a<150],
+    ['Mid dog (+150-249)', a=>a>=150&&a<250],
+    ['Big dog (+250+)', a=>a>=250],
+  ];
+  const oLabels=[],oVals=[];
+  oddsBuckets.forEach(([lbl,test])=>{
+    const bs=settled.filter(r=>{
+      if(r[C.ODDS]==null||isNaN(Number(r[C.ODDS]))) return false;
+      return test(toAmerican(Number(r[C.ODDS])));
+    });
+    if(bs.length){oLabels.push(lbl+' ('+bs.length+')');
+      oVals.push(bs.reduce((s,r)=>s+effProfit(r),0));}
+  });
+  mkBar('c-odds',oLabels,oVals);
+
+  // ── Net by Stake Size: are your small bets throwaways? ───────────────
+  const stakeBuckets=[
+    ['<$20', s=>s<20],['$20–35', s=>s>=20&&s<35],
+    ['$35–60', s=>s>=35&&s<60],['$60+', s=>s>=60],
+  ];
+  const sLabels=[],sVals=[];
+  stakeBuckets.forEach(([lbl,test])=>{
+    const bs=settled.filter(r=>r[C.STAKE]!=null&&test(Number(r[C.STAKE])));
+    if(bs.length){sLabels.push(lbl+' ('+bs.length+')');
+      sVals.push(bs.reduce((s,r)=>s+effProfit(r),0));}
+  });
+  mkBar('c-stake',sLabels,sVals);
+
+  // ── Sport × Bet Type Matrix ───────────────────────────────────────────
+  const matTypes=['Prop','Total','Moneyline','Parlay','Spread','Future','Other'];
+  const matSports=[...new Set(settled.map(r=>normSport(r[C.SPORT])||"").filter(s=>s&&s!=='null'))].sort();
+  const matMap={};
+  settled.forEach(r=>{
+    const sport=normSport(r[C.SPORT])||"";
+    const type=r[C.TYPE]?String(r[C.TYPE]).trim():'';
+    if(!sport||sport==='null'||!type||type==='null') return;
+    const tk=type.charAt(0).toUpperCase()+type.slice(1).toLowerCase();
+    if(!matMap[sport]) matMap[sport]={};
+    if(!matMap[sport][tk]) matMap[sport][tk]={net:0,w:0,l:0};
+    matMap[sport][tk].net+=effProfit(r);
+    if(r[C.STATUS]==='won') matMap[sport][tk].w++;
+    if(r[C.STATUS]==='lost') matMap[sport][tk].l++;
+  });
+  const activeCols=matTypes.filter(t=>matSports.some(s=>matMap[s]&&matMap[s][t]));
+  const matEl=document.getElementById('mat-tbl');
+  if(activeCols.length&&matSports.length){
+    // heat intensity: deeper color = bigger number
+    let maxAbs=1;
+    matSports.forEach(s=>activeCols.forEach(t=>{
+      const d=matMap[s]&&matMap[s][t];
+      if(d&&Math.abs(d.net)>maxAbs) maxAbs=Math.abs(d.net);
+    }));
+    matEl.innerHTML='<thead><tr><th class="lh">Sport</th>'+activeCols.map(t=>`<th>${t}</th>`).join('')+'</tr></thead>'
+      +'<tbody>'+matSports.map(sport=>{
+        return`<tr><td class="rl">${sport}</td>`+activeCols.map(type=>{
+          const d=matMap[sport]&&matMap[sport][type];
+          if(!d||(!d.w&&!d.l&&!d.net)) return '<td class="mc0">—</td>';
+          const sign=d.net>=0?'+':'';
+          const alpha=0.15+0.55*Math.min(1,Math.abs(d.net)/maxAbs);
+          const bg=d.net>0?`rgba(0,214,143,${alpha*0.35})`:d.net<0?`rgba(255,77,77,${alpha*0.35})`:'transparent';
+          const fg=d.net>0?'var(--green)':d.net<0?'var(--red)':'var(--muted)';
+          return`<td style="background:${bg};color:${fg};font-weight:600">${sign}$${Math.abs(d.net).toFixed(0)}<br><span style="font-size:10px;opacity:.75">${d.w}W-${d.l}L</span></td>`;
+        }).join('')+'</tr>';
+      }).join('')+'</tbody>';
+  }
+
+  // ── Recent Bets (settled only) ───────────────────────────────────────
+  const recent=[...settled].sort((a,b)=>(parseDate(b[C.DATE])||0)-(parseDate(a[C.DATE])||0)).slice(0,30);
+  document.getElementById('t-count').textContent=`Last ${recent.length} of ${settled.length} settled`;
+  document.getElementById('t-body').innerHTML=recent.map(r=>{
+    const st=r[C.STATUS]||'pending';
+    const badge=st==='won'?'bw':st==='lost'?'bl':st==='push'?'bp':'bpend';
+    let dateStr='—';
+    const dR=r[C.DATE];
+    if(dR instanceof Date&&!isNaN(dR)) dateStr=dR.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'});
+    else if(dR){const dp=parseDate(String(dR));if(dp&&!isNaN(dp))dateStr=dp.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'});}
+    const bt=r[C.TYPE]?String(r[C.TYPE]).trim():'';
+    const legs=r[C.LEGS]?Number(r[C.LEGS]):0;
+    let typeStr=bt||'—';
+    if(bt.toLowerCase()==='parlay'&&legs>1) typeStr=`Parlay (${legs}L)`;
+    const wasStored=r[C.PROFIT]!=null&&r[C.PROFIT]!=='';
+    const p=effProfit(r);
+    let profitStr='—',profitCls='';
+    if(st!=='pending'){profitStr=fmtMoney(p)+(wasStored?'':'*');profitCls=p>0?'pos':p<0?'neg':'';}
+    return`<tr>
+      <td style="color:var(--label);white-space:nowrap;font-size:12px">${dateStr}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        title="${(r[C.DESC]||'').replace(/"/g,'')}">${r[C.DESC]||'—'}</td>
+      <td style="color:var(--label);white-space:nowrap">${typeStr}</td>
+      <td style="color:var(--label)">${normBook(r[C.BOOK])||'—'}</td>
+      <td style="color:var(--label);white-space:nowrap">${fmtOdds(r[C.ODDS])}</td>
+      <td style="color:var(--label)">${r[C.STAKE]!=null?'$'+Number(r[C.STAKE]).toFixed(2):'—'}</td>
+      <td><span class="badge ${badge}">${st}</span></td>
+      <td class="${profitCls}" style="font-weight:600;white-space:nowrap">${profitStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Calendar render + navigation ──────────────────────────────────────
+function renderCalendar(settled, offset) {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const year = target.getFullYear();
+  const month = target.getMonth();
+  const monthName = target.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+
+  // Build day map for this month
+  const dayMap = {};
+  settled.forEach(r => {
+    const d = parseDate(r[C.SETTLED]||r[C.DATE]);
+    if (!d || d.getFullYear()!==year || d.getMonth()!==month) return;
+    const key = d.getDate();
+    dayMap[key] = (dayMap[key]||0) + effProfit(r);
+  });
+
+  const grid = document.getElementById('cal-grid');
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  grid.innerHTML = dayNames.map(d=>`<div class="cal-hdr">${d}</div>`).join('');
+
+  // Empty cells before first day
+  for (let i=0; i<firstDay; i++) grid.innerHTML += `<div class="cal-day empty"></div>`;
+
+  let calW=0, calL=0, calNet=0;
+  for (let day=1; day<=daysInMonth; day++) {
+    const net = dayMap[day];
+    // Grey out future days
+    const isToday = (year===now.getFullYear()&&month===now.getMonth()&&day===now.getDate());
+    const isFuture = new Date(year,month,day) > now;
+    let cls = 'cal-day' + (isFuture?' empty':'');
+    let amt = '<span style="opacity:.3">·</span>';
+    if (!isFuture && net!=null) {
+      if (net>0)      { cls='cal-day pos'; amt='+$'+Math.round(net); calW++; calNet+=net; }
+      else if (net<0) { cls='cal-day neg'; amt='-$'+Math.round(Math.abs(net)); calL++; calNet+=net; }
+      else amt='$0';
+    }
+    const todayStyle = isToday ? 'box-shadow:0 0 0 2px var(--blue)' : '';
+    const isoDay=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const tap=(net!=null)?` onclick="openDay('${isoDay}')" role="button" style="cursor:pointer;${todayStyle}"`:` style="${todayStyle}"`;
+    grid.innerHTML += `<div class="${cls}"${tap}><div class="cal-num">${day}</div><div class="cal-amt">${amt}</div></div>`;
+  }
+
+  const cn = (calNet>=0?'+$':'−$') + Math.abs(calNet).toFixed(2);
+  document.getElementById('cal-title').textContent = monthName;
+  document.getElementById('cal-sum').textContent = calW+'W '+calL+'L  ·  '+cn;
+
+  // Update nav buttons
+  document.getElementById('cal-next').disabled = offset >= 0;
+  document.getElementById('cal-curr').style.opacity = offset===0 ? '0.4' : '1';
+}
+
+function calNav(dir) {
+  if (dir===0) { window._calOffset=0; }
+  else { window._calOffset = (window._calOffset||0) + dir; }
+  if (window._allSettled) renderCalendar(window._allSettled, window._calOffset);
+}
+
+setInterval(loadData,600000);
+loadData();
+
+// PWA: register service worker (harmless if unsupported)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>
