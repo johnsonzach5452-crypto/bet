@@ -1,0 +1,26 @@
+BET TRACKER — UPDATED FILES
+============================
+
+FILES IN THIS ZIP:
+  bot.py          — sheet auto-widen fix + prop mislabeling fix + reversal
+  dashboard.html  — CLV & Discipline removed, matrix moved up, placement-day
+                    calendar, cache-busted fetch + faster refresh
+  sw.js           — cache bumped to v7 (forces PWA to pull new dashboard)
+
+DEPLOY ORDER:
+  1. Upload all three files to GitHub -> Railway auto-deploys the bot.
+     Wait ~1-2 min for it to come back up.
+  2. In Discord, run:  /fixleagues   (reverses the mislabeled MLB props)
+  3. Then run:         /resync       (pushes clean data + stuck grades to sheet,
+                                       and widens the sheet to 25 columns)
+  4. Hard-refresh the dashboard.
+
+WHAT EACH FIX DOES:
+  - Sheet "exceeds grid limits" errors: bot now widens existing 24-col sheets
+    to 25 so game-time/headshot writes stop failing.
+  - Prop mislabeling: MLB props (strikeouts, outs, total bases) no longer get
+    flipped to NBA/WNBA by shared city codes. /fixleagues reverses old ones.
+  - Dashboard: CLV card + Discipline card removed; Sport x Bet Type matrix
+    moved up near the top; calendar buckets bets by the day PLACED.
+  - Grade-to-dashboard lag: dashboard now cache-busts every fetch, refreshes
+    every 90s, and refreshes when you return to the tab.

@@ -276,11 +276,6 @@ tr:hover td{background:var(--s2)}
       <div class="sc-val" id="s-rec">—</div>
       <div class="sc-sub" id="s-rec-sub">—</div>
     </div>
-    <div class="sc" style="--a:var(--green)">
-      <div class="sc-lbl">Avg CLV</div>
-      <div class="sc-val" id="s-clv">—</div>
-      <div class="sc-sub" id="s-clv-sub">—</div>
-    </div>
     <div class="sc tappable" onclick="toggleType('moneyline')" role="button" tabindex="0">
       <div class="sc-lbl">Moneyline</div>
       <div class="sc-val" id="s-ml">—</div>
@@ -362,25 +357,14 @@ tr:hover td{background:var(--s2)}
     <div id="pend-body"></div>
   </div>
 
-  <!-- ── Closing Line Value ── -->
-  <div class="tcard" id="clv-section" style="display:none">
+  <!-- ── Sport × Bet Type Matrix ── -->
+  <div class="tcard">
     <div class="thead">
-      <span class="ct" style="margin:0">Closing Line Value</span>
-      <span id="clv-note" style="color:var(--muted);font-size:11px">beat the close = real edge</span>
+      <span class="ct" style="margin:0">Net P&L — Sport × Bet Type</span>
+      <span style="color:var(--muted);font-size:11px">green = +  red = −</span>
     </div>
-    <div class="clv-body">
-      <div style="padding:22px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
-        <div class="clv-lbl" style="margin-bottom:8px">Average CLV</div>
-        <div class="clv-num" id="clv-avg" style="font-size:52px">—</div>
-        <div class="clv-lbl" style="margin-top:8px;text-transform:none;letter-spacing:0;font-weight:500" id="clv-n">—</div>
-        <div id="clv-ev" style="margin-top:14px;font-size:12px;color:var(--label);line-height:1.7"></div>
-      </div>
-      <div style="padding:14px;border-left:1px solid var(--border)">
-        <div class="ct" style="margin-bottom:10px">Avg CLV by Sport</div>
-        <div id="clv-sports"></div>
-        <div class="ct" style="margin:16px 0 10px">Avg CLV by Book</div>
-        <div id="clv-books"></div>
-      </div>
+    <div style="padding:12px" class="matrix-scroll">
+      <table class="matrix" id="mat-tbl"></table>
     </div>
   </div>
 
@@ -434,15 +418,6 @@ tr:hover td{background:var(--s2)}
       font-size:12px;color:var(--label);display:none"></div>
   </div>
 
-  <!-- ── Discipline: the stats no other tracker shows ── -->
-  <div class="tcard" id="disc-section" style="display:none">
-    <div class="thead">
-      <span class="ct" style="margin:0">🧠 Discipline</span>
-      <span class="trend-note">how you behave, not just how you score</span>
-    </div>
-    <div id="disc-rows" style="padding:12px 14px"></div>
-  </div>
-
   <!-- ── Odds Range + Stake Size: where the edge actually lives ── -->
   <div class="two-col">
     <div class="cc" style="margin:0">
@@ -464,17 +439,6 @@ tr:hover td{background:var(--s2)}
     <div class="cc" style="margin:0">
       <div class="ct">Net by Sportsbook</div>
       <div class="cw" style="height:200px"><canvas id="c-book"></canvas></div>
-    </div>
-  </div>
-
-  <!-- ── Sport × Bet Type Matrix ── -->
-  <div class="tcard">
-    <div class="thead">
-      <span class="ct" style="margin:0">Net P&L — Sport × Bet Type</span>
-      <span style="color:var(--muted);font-size:11px">green = +  red = −</span>
-    </div>
-    <div style="padding:12px" class="matrix-scroll">
-      <table class="matrix" id="mat-tbl"></table>
     </div>
   </div>
 
@@ -775,7 +739,7 @@ function openDay(iso){
   const bets=LAST_ROWS.filter(r=>{
     const st=(r[C.STATUS]||'').toString().toLowerCase();
     if(st==='pending') return false;
-    const d=parseDate(r[C.SETTLED]||r[C.DATE]);
+    const d=parseDate(r[C.DATE]);   // placement day, matching the grid
     return d&&d>=day&&d<next;});
   if(!bets.length) return;
   const net=bets.reduce((s,r)=>s+effProfit(r),0);
@@ -1129,98 +1093,8 @@ function render(rows){
     }).join('');
   }
 
-  // ── Closing Line Value section ───────────────────────────────────────
-  const clvSec=document.getElementById('clv-section');
-  const clvBets=settled
-    .map(r=>({clv:clvPct(r[C.ODDS], r[C.CLOSE]), d:parseDate(r[C.DATE]), desc:r[C.DESC]||''}))
-    .filter(b=>b.clv!=null&&!isNaN(b.clv))
-    .sort((a,b)=>(a.d||0)-(b.d||0));
-  if(!clvBets.length){
-    clvSec.style.display='none';
-    document.getElementById('s-clv').textContent='—';
-    document.getElementById('s-clv').className='sc-val neu';
-    document.getElementById('s-clv-sub').textContent='captures start pre-game';
-  } else {
-    clvSec.style.display='block';
-    const avg=clvBets.reduce((s,b)=>s+b.clv,0)/clvBets.length;
-    const avgEl=document.getElementById('clv-avg');
-    avgEl.textContent=(avg>=0?'+':'')+avg.toFixed(1)+'%';
-    avgEl.className='clv-num '+(avg>0?'pos':avg<0?'neg':'neu');
-    document.getElementById('clv-n').textContent=clvBets.length+' tracked bets';
-    // headline card
-    const cardV=document.getElementById('s-clv');
-    cardV.textContent=(avg>=0?'+':'')+avg.toFixed(1)+'%';
-    cardV.className='sc-val '+(avg>0?'pos':avg<0?'neg':'neu');
-    cardV.closest('.sc').style.setProperty('--a',
-      avg>0?'var(--green)':avg<0?'var(--red)':'var(--border)');
-    const cardS=document.getElementById('s-clv-sub');
-    cardS.textContent=clvBets.length+' closes tracked';
-    cardS.className='sc-sub';
-    document.getElementById('clv-note').textContent=
-      avg>0?'you\u2019re beating the close \u2014 edge is real':'avg below close \u2014 entries lagging the market';
-
-    // #4 luck vs skill: expected P&L from closing-line probabilities
-    let expSum=0, actSum=0, evN=0;
-    settled.forEach(r=>{
-      const st=r[C.STATUS];
-      if(st!=='won'&&st!=='lost') return;
-      const close=r[C.CLOSE], entry=r[C.ODDS], stake=Number(r[C.STAKE]);
-      if(close==null||close===''||Number(close)===0||entry==null||!stake) return;
-      const ca=toAmerican(Number(close)), ea=toAmerican(Number(entry));
-      if(isNaN(ca)||isNaN(ea)||ca===0||ea===0) return;
-      const p=ca<0?-ca/(-ca+100):100/(ca+100);              // true win prob from close
-      const winAmt=ea>0?stake*ea/100:stake*100/Math.abs(ea); // payout at YOUR price
-      expSum+=p*winAmt-(1-p)*stake;
-      actSum+=effProfit(r); evN++;
-    });
-    const evEl=document.getElementById('clv-ev');
-    if(evN>=10){
-      const luck=actSum-expSum;
-      evEl.innerHTML='Actual <b class="'+(actSum>=0?'pos':'neg')+'">'+fmtMoney(actSum)+'</b>'
-        +' vs expected <b class="'+(expSum>=0?'pos':'neg')+'">'+fmtMoney(expSum)+'</b><br>'
-        +'<span class="'+(luck>=0?'pos':'neg')+'">running '+fmtMoney(Math.abs(luck)).replace('+','').replace('-','')
-        +' '+(luck>=0?'hot':'cold')+'</span> over '+evN+' tracked bets';
-    } else evEl.textContent='';
-
-    // avg CLV by sport
-    const sportMap={};
-    settled.forEach(r=>{
-      const cv=clvPct(r[C.ODDS], r[C.CLOSE]);
-      if(cv==null||isNaN(cv)) return;
-      const sp=normSport(r[C.SPORT])||'Other';
-      if(!sportMap[sp]) sportMap[sp]={sum:0,n:0};
-      sportMap[sp].sum+=cv; sportMap[sp].n++;
-    });
-    const sportRows=Object.entries(sportMap)
-      .map(([sp,d])=>({sp,avg:d.sum/d.n,n:d.n}))
-      .sort((a,b)=>b.avg-a.avg);
-    document.getElementById('clv-sports').innerHTML=sportRows.length
-      ? sportRows.map(s=>`<div class="clv-sport">
-          <span class="clv-sport-name">${s.sp}<span class="clv-sport-n">${s.n} bets</span></span>
-          <span class="clv-sport-val ${s.avg>0?'pos':s.avg<0?'neg':'neu'}">${s.avg>=0?'+':''}${s.avg.toFixed(1)}%</span>
-        </div>`).join('')
-      : '<div style="color:var(--muted);font-size:12px;padding:8px 0">no data yet</div>';
-
-    // #6 avg CLV by sportsbook: where do you actually have edge?
-    const bookMap={};
-    settled.forEach(r=>{
-      const cv=clvPct(r[C.ODDS], r[C.CLOSE]);
-      if(cv==null||isNaN(cv)) return;
-      const bk=normBook(r[C.BOOK])||'Other';
-      if(!bookMap[bk]) bookMap[bk]={sum:0,n:0};
-      bookMap[bk].sum+=cv; bookMap[bk].n++;
-    });
-    const bookRows=Object.entries(bookMap)
-      .map(([bk,d])=>({bk,avg:d.sum/d.n,n:d.n}))
-      .sort((a,b)=>b.avg-a.avg).slice(0,6);
-    document.getElementById('clv-books').innerHTML=bookRows.length
-      ? bookRows.map(s=>`<div class="clv-sport">
-          <span class="clv-sport-name">${bookBadge(s.bk)}<span class="clv-sport-n">${s.n} bets</span></span>
-          <span class="clv-sport-val ${s.avg>0?'pos':s.avg<0?'neg':'neu'}">${s.avg>=0?'+':''}${s.avg.toFixed(1)}%</span>
-        </div>`).join('')
-      : '<div style="color:var(--muted);font-size:12px;padding:8px 0">no data yet</div>';
-
-    }
+  // (CLV card removed per user request; clvPct() helper is retained above
+  //  because Entry Timing still uses it for its by-window CLV column.)
 
   // ── Monthly P&L ──────────────────────────────────────────────────────
   const monthMap={},monthKey={};
@@ -1369,48 +1243,6 @@ function render(rows){
     sec.style.display=(todHtml||leadHtml)?'block':'none';
   })();
 
-  // ── Discipline: tilt check, drawdown, streaks ────────────────────────
-  (function(){
-    const sec=document.getElementById('disc-section');
-    const chron=[...settled].sort((a,b)=>(parseDate(a[C.SETTLED]||a[C.DATE])||0)-(parseDate(b[C.SETTLED]||b[C.DATE])||0));
-    if(chron.length<10){sec.style.display='none';return;}
-    // tilt: stake sizing right after 2+ consecutive losses vs baseline
-    let lossRun=0; const afterL=[], base=[];
-    chron.forEach(r=>{
-      const st=r[C.STATUS], stake=Number(r[C.STAKE])||0;
-      if(stake>0){(lossRun>=2?afterL:base).push(stake);}
-      if(st==='lost')lossRun++; else lossRun=0;
-    });
-    // max drawdown from running P&L
-    let run=0,peak=0,dd=0;
-    chron.forEach(r=>{run+=effProfit(r);peak=Math.max(peak,run);dd=Math.max(dd,peak-run);});
-    // longest streaks
-    let curW=0,curL=0,maxW=0,maxL=0;
-    chron.forEach(r=>{
-      if(r[C.STATUS]==='won'){curW++;curL=0;maxW=Math.max(maxW,curW);}
-      else if(r[C.STATUS]==='lost'){curL++;curW=0;maxL=Math.max(maxL,curL);}
-    });
-    const row=(label,val,sub)=>`<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border)">
-      <span style="font-size:12px;color:var(--label)">${label}</span>
-      <span style="text-align:right"><span style="font-family:'Barlow Condensed';font-size:17px;font-weight:700">${val}</span>
-      ${sub?`<span style="font-size:11px;color:var(--muted)"> ${sub}</span>`:''}</span></div>`;
-    let html='';
-    if(afterL.length>=5&&base.length>=10){
-      const aAvg=afterL.reduce((s,x)=>s+x,0)/afterL.length;
-      const bAvg=base.reduce((s,x)=>s+x,0)/base.length;
-      const pct=Math.round((aAvg/bAvg-1)*100);
-      if(pct>=25) html+=row('⚠️ Tilt check: stake after 2+ straight losses',
-        `<span class="neg">+${pct}%</span>`,`$${bAvg.toFixed(0)} → $${aAvg.toFixed(0)} · ${afterL.length} spots`);
-      else html+=row('✅ Stake after 2+ straight losses',
-        `${pct>=0?'+':''}${pct}%`,`steady · ${afterL.length} spots`);
-    }
-    html+=row('Max drawdown','-$'+dd.toFixed(0),'peak-to-trough');
-    html+=row('Longest win streak',maxW,'');
-    html+=row('Longest loss streak',maxL,'');
-    document.getElementById('disc-rows').innerHTML=html;
-    sec.style.display='block';
-  })();
-
   // ── Net by Odds Range: are you a fav-layer or dog-hunter? ────────────
   const oddsBuckets=[
     ['Heavy fav (-200+)', a=>a<=-200],
@@ -1526,7 +1358,10 @@ function renderCalendar(settled, offset) {
   // Build day map for this month
   const dayMap = {};
   settled.forEach(r => {
-    const d = parseDate(r[C.SETTLED]||r[C.DATE]);
+    // Calendar buckets by the day the bet was PLACED (col A / Date Posted),
+    // not settlement day — so "what did I bet that day" reads intuitively.
+    // (Equity curve & monthly P&L still use settlement day for bankroll.)
+    const d = parseDate(r[C.DATE]);
     if (!d || d.getFullYear()!==year || d.getMonth()!==month) return;
     const key = d.getDate();
     dayMap[key] = (dayMap[key]||0) + effProfit(r);

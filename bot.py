@@ -3763,6 +3763,34 @@ _CITY_ABBR = {"MIN":"minnesota","PHX":"phoenix","PHO":"phoenix","CHI":"chicago",
               "CONN":"connecticut","CON":"connecticut","TOR":"toronto","POR":"portland"}
 
 
+# Prop/stat vocabulary that unambiguously identifies a sport. Used to stop
+# the cross-sport corrector from flipping e.g. an MLB strikeout prop to NBA
+# just because the text contains a shared city code like "MIN" or "LAA".
+_BASEBALL_TERMS = re.compile(
+    r"\b(strikeout|strikeouts|\bk\b|\bks\b|earned run|earned runs|"
+    r"total base|total bases|\brbi\b|\brbis\b|home run|home runs|"
+    r"\bhr\b|hits allowed|walks allowed|outs recorded|innings|"
+    r"pitch(?:ing|er|es)?|batter|at.bat|stolen base|singles|doubles|triples|"
+    r"\beras?\b|no.hitter|shutout|grand slam)\b", re.I)
+_FOOTBALL_TERMS = re.compile(
+    r"\b(passing yard|passing yards|rushing yard|rushing yards|receiving yard|"
+    r"receiving yards|touchdown|touchdowns|\btd\b|\btds\b|reception|receptions|"
+    r"completion|completions|interception|interceptions|sack|sacks|"
+    r"field goal|rush attempt|pass attempt|quarterback|\bqb\b)\b", re.I)
+
+
+def _nonbasketball_sport_from_desc(desc):
+    """Return 'baseball'/'football' when the text names a stat unique to that
+    sport, else None. A positive hit means: do NOT reclassify as basketball,
+    no matter what team abbreviations appear."""
+    text = desc or ""
+    if _BASEBALL_TERMS.search(text):
+        return "baseball"
+    if _FOOTBALL_TERMS.search(text):
+        return "football"
+    return None
+
+
 def _basketball_league_from_desc(desc):
     """Return 'NBA', 'WNBA', or None (no/ambiguous team evidence).
     Checks nicknames AND league-distinctive abbreviations (LAL, CONN...)."""
@@ -4162,7 +4190,11 @@ def verify_league(data):
         # (e.g. labeled "Soccer"). If the description unambiguously names a
         # basketball team but the sport isn't basketball, fix both fields.
         if sport != "basketball":
-            by_team = _basketball_league_from_desc(desc)
+            # Never flip to basketball when the prop names a baseball/football
+            # stat -- shared city codes (MIN, LAA, SEA) were causing MLB props
+            # like "Over 6.5 Strikeouts" to be mislabeled NBA/WNBA.
+            blocking = _nonbasketball_sport_from_desc(desc)
+            by_team = None if blocking else _basketball_league_from_desc(desc)
             if by_team:
                 old_sport = data.get("sport") or "?"
                 old_league = data.get("league") or "?"
@@ -4796,7 +4828,23 @@ async def fixleagues(interaction: discord.Interaction):
             claimed = (b.get("league") or "").upper().strip()
             if _SUMMER_LEAGUE_RE.search(b.get("description") or ""):
                 continue   # Summer League bets are correctly NBA in July
-            correct = _basketball_league_from_desc(b.get("description"))
+            other_sport = _nonbasketball_sport_from_desc(b.get("description"))
+
+            # REVERSAL: a bet previously mis-flipped to basketball but whose
+            # text clearly names a baseball/football stat gets sent back.
+            # This un-does the shared-city-code corruption on existing rows.
+            if other_sport and claimed_sport == "basketball":
+                sport_name = other_sport.capitalize()
+                league_guess = {"baseball": "MLB", "football": "NFL"}.get(other_sport, "")
+                await db.execute(
+                    "UPDATE bets SET sport=?, league=? WHERE message_id=?",
+                    (sport_name, league_guess, b["message_id"]))
+                changes.append(f"[Basketball→{sport_name}] {claimed or '?'} → "
+                               f"{league_guess}: {(b.get('description') or '')[:50]}")
+                continue
+
+            correct = (None if other_sport
+                       else _basketball_league_from_desc(b.get("description")))
             wrong_sport = claimed_sport != "basketball" and bool(correct)
             if not correct and claimed_sport == "basketball":
                 correct = _basketball_season_guess(b.get("created_at"))

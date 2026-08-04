@@ -1,6 +1,6 @@
 // BetTracker service worker — network-first so data is always fresh,
 // cached shell so the app still opens offline.
-const CACHE = "bettracker-v5";
+const CACHE = "bettracker-v7";
 const SHELL = ["./dashboard.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
